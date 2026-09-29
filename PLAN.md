@@ -151,11 +151,11 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] 黄金基线 V2：视觉主干 ORT CPU + numpy 手写 MHA + numpy 三线性（与 .NET 同数值路径；坑：pred_mask (1,96,256,384) 漏剥 batch 维会使边界器官全集、intact 恒空，v1↔v2 mean 偏差 1.1e-2 → 修复后 2.3e-5）
 - **验收（已达成）**：① 每窗 8 张量对齐 golden；② 端到端 146/146 匹配 max_diff=5.96e-7（门禁 1e-3），CPU 端到端 119s；③ v2 基线 vs 官方 CSV mean=7.4e-5 PASS、vs v1 torch 路径 mean=2.3e-5；全量测试 6/6 通过
 
-### M4 — Radar.Backend + Web 测试端（预计 2–3 天）
-- [ ] 任务队列（Channel，GPU 单 worker）、文件上传/暂存、结果缓存
-- [ ] /api/jobs 系列端点 + /api/devices
-- [ ] wwwroot 单页（上传/选样例/设备选择/进度/结果表/偏差对齐列/CSV 下载）
-- **验收**：Web 端跑 demo case，结果与 M3 CLI 结果一致；并发 2 任务队列行为正确
+### M4 — Radar.Backend + Web 测试端（预计 2–3 天）✅ 2026-09-29
+- [x] 任务队列（Channel 单 worker 串行，GPU 会话独占）、上传/暂存、设备探活缓存
+- [x] /api/jobs 系列 + /api/devices + /api/samples + CSV 下载
+- [x] wwwroot 单页（设备选择/样例/上传/队列轮询/146 项结果表/CSV 下载）
+- **验收（已达成）**：并发 2 任务串行排队正确；Web 端 demo case 146 项 vs golden max=1.1e-6 mean=5.3e-8，与 CLI 结果逐位一致，单任务 120s
 
 ### M5 — 性能测试与多 EP 矩阵（预计 2 天）
 - [ ] 基准：demo case 在 CPU / DirectML / (CUDA 若可用) 三路径的端到端耗时 + 各阶段分解（目标：CPU ≤ Python GPU 版 2×，DirectML ≤ Python GPU 版 1.5×，量级待实测标定）
