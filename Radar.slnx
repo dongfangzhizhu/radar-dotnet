@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Radar.Backend/Radar.Backend.csproj" />
+    <Project Path="src/Radar.Core/Radar.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Radar.Tests/Radar.Tests.csproj" />
+  </Folder>
+</Solution>

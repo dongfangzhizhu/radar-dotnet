@@ -1,0 +1,34 @@
+# .NET 构建产物
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+TestResults/
+*.binlog
+
+# 模型权重与导出产物（体积大，不入库；获取方式见 PLAN.md「模型产物管理」）
+models/*.onnx
+models/*.npz
+models/*.safetensors
+models/*.ort
+
+# 测试数据（原始 NIfTI 不入库，统一从 damo-radar/data 软引用或下载脚本获取）
+testdata/*.nii
+testdata/*.nii.gz
+testdata/*.zip
+uploads/
+results/
+
+# Python 导出脚本虚拟环境
+export/.venv/
+export/__pycache__/
+__pycache__/
+*.pyc
+
+# 日志与临时文件
+*.log
+*.tmp
+.DS_Store
