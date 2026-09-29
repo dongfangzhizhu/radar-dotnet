@@ -72,16 +72,25 @@ public sealed class InferenceJobRunner : BackgroundService
 
     // ---- 设备探活 ----
 
-    /// <summary>探测某 EP 是否可用（对该 ONNX 真实建会话，成功即用后即毁）。</summary>
+    /// <summary>
+    /// 探测某 EP 是否可用。注意 OnnxSessionFactory.Create 失败会静默回退 CPU，
+    /// 因此必须校验返回的实际 EP 与请求一致，否则 DML/CUDA 不可用时会被误报为可用。
+    /// </summary>
     public bool ProbeDevice(string device)
     {
+        var want = ParseDevice(device);
         return _deviceProbe.GetOrAdd(device, d =>
         {
             try
             {
-                var (sess, _) = OnnxSessionFactory.Create(
-                    Path.Combine(_modelsDir, "radar_vision.onnx"), ParseDevice(d));
+                var (sess, used) = OnnxSessionFactory.Create(
+                    Path.Combine(_modelsDir, "radar_vision.onnx"), want);
                 sess.Dispose();
+                if (used != want)
+                {
+                    _logger.LogWarning("设备 {Device} 不可用（会话回退为 {Used}）", d, used);
+                    return false;
+                }
                 return true;
             }
             catch (Exception ex)

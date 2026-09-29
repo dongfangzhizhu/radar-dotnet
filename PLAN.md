@@ -157,11 +157,12 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] wwwroot 单页（设备选择/样例/上传/队列轮询/146 项结果表/CSV 下载）
 - **验收（已达成）**：并发 2 任务串行排队正确；Web 端 demo case 146 项 vs golden max=1.1e-6 mean=5.3e-8，与 CLI 结果逐位一致，单任务 120s
 
-### M5 — 性能测试与多 EP 矩阵（预计 2 天）
-- [ ] 基准：demo case 在 CPU / DirectML / (CUDA 若可用) 三路径的端到端耗时 + 各阶段分解（目标：CPU ≤ Python GPU 版 2×，DirectML ≤ Python GPU 版 1.5×，量级待实测标定）
-- [ ] fp16 ONNX 可选路径（精度对齐通过后默认开启 GPU fp16）
-- [ ] 扩展数据集冒烟：`../damo-radar/data/merlin_data_train_demo/` 下样例批量跑，无崩溃、无 NaN
-- **验收**：性能报告（markdown）入库；三路径数值一致性结论明确
+### M5 — 性能测试与多 EP 矩阵（预计 2 天）✅ 2026-09-29
+- [x] 基准程序 `tools/Radar.Benchmark`（阶段分解：预处理/会话创建/ORT/轻头/端到端）
+- [x] 扩展数据集冒烟：merlin 4 例，3 PASS 1 FAIL（FAIL=AC4242a2f 器官 bbox 跨 96+ 层，补推窗 (96,288,384) 超固定 ONNX 输入 → R4 缺口确认，见下）
+- [ ] fp16 ONNX 可选路径（待办：需重导 fp16 模型 + 全链路精度复验）
+- **实测结论（benchmarks.md，Debug 构建）**：① 本机 DirectML/CUDA EP 均不可用（AppendExecutionProvider 抛异常回退 Cpu），三行矩阵实际全为 CPU，端到端 80~121s；② CPU 端 ORT 占 ~73%（88s/121s），手写轻头 ~5%；③ 探活修复：Create 会静默回退，ProbeDevice 必须校验返回的实际 EP。
+- **R4 缺口（后续项）**：固定 shape (96,256,384) ONNX 无法处理补推 bbox 超出 ROI 的大器官；修复路径 = 动态 shape 重导（C# 契约需同步改）或补推区二次滑窗（数值行为与原版有差）。
 
 > 总工期估算：**11–15 个工作日**（单人）。M1 硬门槛已于 2026-09-29 通过（4 个 commit）。
 >
