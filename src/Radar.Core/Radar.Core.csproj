@@ -4,16 +4,31 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- ONNX 原生包选择：同进程只能加载一个 onnxruntime.dll（DML build 与 CUDA build 互斥）。
+         构建时用 -p:OnnxEp=Dml 或 -p:OnnxEp=Cuda 选变体，部署时按目标机器 GPU 类型选产物：
+           Cuda（默认）= NVIDIA 显卡，Gpu 包（CPU EP + CUDA EP，需本机 CUDA 12 + cuDNN 9）
+           Dml         = AMD/Intel/无独显的 Windows，DirectML 包（CPU EP + DML EP） -->
+    <OnnxEp Condition="'$(OnnxEp)' == ''">Cuda</OnnxEp>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- DICOM 读取（CT 序列/多帧），DicomReader.cs 使用 -->
+    <PackageReference Include="fo-dicom" Version="5.1.3" />
+  </ItemGroup>
+
+  <!-- 托管层版本跟随原生包变体（保持 C API 版本自洽） -->
+  <ItemGroup Condition="'$(OnnxEp)' == 'Cuda'">
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.30.0" />
-    <!-- Gpu 包的 onnxruntime.dll 自带 CPU EP + CUDA EP（原生二选一，勿与 .OnnxRuntime/.DirectML 包并存）。
+    <!-- Gpu 包的 onnxruntime.dll 自带 CPU EP + CUDA EP。
          CUDA EP 绑定 CUDA 12 + cuDNN 9：cudart/cublas/cudnn 运行时本机自备，
          OnnxSessionFactory 会自动把 CUDA/cuDNN bin 挂进进程 DLL 搜索路径 -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.30.0" />
-    <!-- DICOM 读取（CT 序列/多帧），DicomReader.cs 使用 -->
-    <PackageReference Include="fo-dicom" Version="5.1.3" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(OnnxEp)' == 'Dml'">
+    <!-- DirectML 包停发于 1.24.4，托管层同步降版保持 C API 匹配 -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.24.4" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
   </ItemGroup>
 
 </Project>

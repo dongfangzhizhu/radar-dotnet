@@ -169,8 +169,10 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] **CUDA 实测**（Release，demo case 3 窗）：数值 vs golden max=4e-4 mean=2.6e-5（GPU fp32 几乎无 argmax 翻转）；端到端 99.7s（首跑）/104.1s（稳态）——**慢于 CPU 60.2s**，瓶颈是大输出张量（seg_probs 349MB/窗）PCIe 拷贝 + 每 job 会话重建，GPU 加速收益需 IOBinding/会话复用才能兑现（后续项）
 - [x] **DICOM 支持**（`DicomReader.cs`，fo-dicom 5.1）：三种输入——单文件 .dcm（多帧 Enhanced CT）、目录序列（按 ImagePositionPatient 沿法向投影排序）、.zip 序列；RescaleSlope/Intercept → HU；Backend 上传与样例接口同步放宽；前端提示更新
 - [x] **DICOM 对拍**（DicomTests）：testdata/dicom_demo.zip（make_dicom.py 从 AC423ccbe.nii.gz 无损转换，368 切片）读回 HU 与 NIfTI 直读**逐位一致（max_diff=0）**、spacing 一致、预处理输出一致（<1e-5）——DICOM 链路与 NIfTI 链路数值等价
-- [ ] CUDA 性能兑现：IOBinding 预分配 + 会话跨 job 复用（当前数值正确、速度待优化）
-- [ ] DICOM 压缩传输语法（JPEG/JP2 等）暂不支持，需时加 DicomTranscoder 解压
+- [x] **CUDA 性能兑现（会话复用 + 输出缓冲复用）**：JobRunner 按 EP 缓存 VisionEngine 跨任务复用（RadarInferenceEngine 不再级联 Dispose）；VisionEngine 输出缓冲跨窗复用（~450MB/窗免重复分配）。实测（Release，RTX 4090）：demo case CUDA 首跑 120.9s（含会话/上下文初始化）→ **稳态 24.7s**（CPU 60.2s 的 2.4 倍快），数值 vs golden 不变（max=4e-4 mean=2.6e-5）
+- [x] **DICOM 压缩传输语法**：DicomReader 自动把压缩语法（JPEG/JPEG-LS/JPEG2000/RLE 等）经 `Imaging.Codec.DicomTranscoder` 转码为 Explicit VR LE 后解码；RLE 无损压缩回环对拍逐位一致（CompressedTransferSyntax 测试）
+- [x] **部署双变体（DirectML + CUDA）**：ORT 同进程只能加载一个 onnxruntime.dll（DML build 与 CUDA build 互斥），csproj 按 `-p:OnnxEp=Cuda|Dml` 条件选择原生包变体（Cuda=Gpu 1.30 / Dml=DirectML 1.24.4，托管层版本跟随），部署时按目标机器 GPU 类型选产物；本机验证 DML 变体探活 `DirectMl: OK（实际 EP = DirectMl）`
+- [ ] DICOM 有损压缩（JPEG 有损族）精度影响评估（当前无损族已覆盖）
 
 > 总工期估算：**11–15 个工作日**（单人）。M1 硬门槛已于 2026-09-29 通过（4 个 commit）。
 >

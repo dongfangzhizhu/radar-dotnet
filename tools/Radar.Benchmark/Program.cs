@@ -12,11 +12,32 @@ using Radar.Core.Support;
 /// </summary>
 internal static class Program
 {
-    private static void Main()
+    private static void Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
         string root = FindRepoRoot();
         string modelsDir = Path.Combine(root, "models");
+        string modelPath = Path.Combine(modelsDir, "radar_vision.onnx");
+
+        // probe 模式：只探活三设备（真实 EP 校验），秒级返回
+        if (args.Length > 0 && args[0] == "probe")
+        {
+            foreach (var dev in new[] { ExecutionDevice.Cpu, ExecutionDevice.DirectMl, ExecutionDevice.Cuda })
+            {
+                try
+                {
+                    var (sess, used) = OnnxSessionFactory.Create(modelPath, dev);
+                    sess.Dispose();
+                    Console.WriteLine($"{dev}: OK（实际 EP = {used}）");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"{dev}: FAIL —— {ex.Message}");
+                }
+            }
+            return;
+        }
+
         string benchPath = Path.Combine(root, "benchmarks.md");
 
         var head = new OrganHead(
@@ -26,7 +47,6 @@ internal static class Program
                 Path.Combine(modelsDir, "text_feats.json")));
         var items = head.Text.Items.ToList();
         var testOrgans = items.Select(i => i.Split('_')[0]).Distinct().ToList();
-        string modelPath = Path.Combine(modelsDir, "radar_vision.onnx");
 
         // ---- ① 设备矩阵（demo case） ----
         string demoNii = Path.Combine(root, "testdata", "AC423ccbe.nii.gz");

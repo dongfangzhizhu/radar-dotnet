@@ -9,7 +9,7 @@ namespace Radar.Core.Nifti;
 ///   ① 单文件 .dcm（多帧 Enhanced CT）
 ///   ② 目录（单序列多文件，按 ImagePositionPatient 沿切片法向排序）
 ///   ③ .zip（单序列打包，解压到临时目录后走目录逻辑）
-/// 仅支持未压缩传输语法（Implicit/Explicit VR LE）；压缩格式抛 NotSupportedException。
+/// 压缩传输语法（JPEG/JPEG-LS/JPEG2000/RLE 等）自动转码为 Explicit VR LE 后解码。
 /// 注意：切片排序按几何位置（法向投影），与 InstanceNumber 无关。
 /// </summary>
 public static class DicomReader
@@ -63,7 +63,16 @@ public static class DicomReader
             DicomFile df;
             try { df = DicomFile.Open(p); }
             catch (Exception ex) { throw new InvalidDataException($"DICOM 文件打开失败: {p} —— {ex.Message}"); }
+
             var ds = df.Dataset;
+            var syntax = ds.InternalTransferSyntax;
+            if (syntax != null && syntax.IsEncapsulated)
+            {
+                // 压缩传输语法（JPEG/JPEG-LS/JPEG2000/RLE 等）→ 转码为未压缩 Explicit VR LE
+                ds = new FellowOakDicom.Imaging.Codec.DicomTranscoder(
+                    syntax, DicomTransferSyntax.ExplicitVRLittleEndian)
+                    .Transcode(ds);
+            }
             if (!ds.Contains(DicomTag.ImagePositionPatient)) continue; // 非图像切片（定位片除外延）
             string series = ds.GetSingleValue<string>(DicomTag.SeriesInstanceUID);
             if (!groups.TryGetValue(series, out var list)) groups[series] = list = [];

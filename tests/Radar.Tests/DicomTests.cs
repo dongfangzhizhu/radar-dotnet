@@ -58,4 +58,42 @@ public class DicomTests
         }
         Assert.True(prepMax < 1e-5, $"预处理输出 max_diff={prepMax}");
     }
+
+    [Fact]
+    public void CompressedTransferSyntax_DecodesToSameHu()
+    {
+        string zip = Path.Combine(Root, "testdata", "dicom_demo.zip");
+        if (!File.Exists(zip))
+            return; // 测试数据未生成（testdata/make_dicom.py）
+
+            // 用未压缩序列的切片转成 RLE 无损压缩语法，验证 DicomReader 自动转码链路
+            string tmp = Path.Combine(Path.GetTempPath(), "radar_dcm_rle_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                System.IO.Compression.ZipFile.ExtractToDirectory(zip, tmp);
+                var raw = Directory.GetFiles(tmp, "*.dcm")[0];
+                var df = FellowOakDicom.DicomFile.Open(raw);
+                var compressed = new FellowOakDicom.Imaging.Codec.DicomTranscoder(
+                    df.Dataset.InternalTransferSyntax,
+                    FellowOakDicom.DicomTransferSyntax.RLELossless).Transcode(df.Dataset);
+                string rlePath = Path.Combine(tmp, "compressed_rle.dcm");
+            new FellowOakDicom.DicomFile(compressed).Save(rlePath);
+
+            // 单切片 RLE 压缩文件读回（无损，HU 应逐位一致）
+            var img = DicomReader.ReadFile(rlePath);
+            Assert.Equal(512, img.DimX);
+            Assert.Equal(512, img.DimY);
+            Assert.Equal(1, img.DimZ);
+
+            // 与未压缩原片逐位对拍
+            var imgRaw = DicomReader.ReadFile(raw);
+            long vox = (long)img.DimX * img.DimY * img.DimZ;
+            for (long i = 0; i < vox; i++)
+                Assert.Equal(imgRaw.Data[i], img.Data[i]);
+        }
+        finally
+        {
+            try { Directory.Delete(tmp, recursive: true); } catch { }
+        }
+    }
 }

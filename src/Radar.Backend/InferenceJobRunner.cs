@@ -61,6 +61,20 @@ public sealed class InferenceJobRunner : BackgroundService
             Path.Combine(_modelsDir, "text_feats.bin"),
             Path.Combine(_modelsDir, "text_feats.json")));
 
+    // 模型会话按 EP 缓存、跨任务复用（单 worker 串行，无并发竞争）——
+    // CUDA 会话重建成本高（上下文/算子选择），复用是 GPU 路径提速的关键之一
+    private readonly Dictionary<ExecutionDevice, VisionEngine> _engineCache = new();
+
+    private VisionEngine GetEngine(ExecutionDevice device)
+    {
+        if (!_engineCache.TryGetValue(device, out var engine))
+        {
+            engine = new VisionEngine(Path.Combine(_modelsDir, "radar_vision.onnx"), device);
+            _engineCache[device] = engine;
+        }
+        return engine;
+    }
+
     /// <summary>146 个打分条目（来自 text_feats.json 的索引）。</summary>
     public IReadOnlyList<string> TestItems => Head.Text.Items;
 
@@ -155,6 +169,14 @@ public sealed class InferenceJobRunner : BackgroundService
         }
     }
 
+    /// <summary>服务停止时统一释放按设备缓存的所有模型会话。</summary>
+    public override void Dispose()
+    {
+        foreach (var e in _engineCache.Values) e.Dispose();
+        _engineCache.Clear();
+        base.Dispose();
+    }
+
     private (Dictionary<string, double> Probabilities, int Windows) RunInference(string inputPath, string device)
     {
         // 1) 读取（NIfTI / DICOM 单文件多帧 / DICOM zip 序列）+ 预处理（与 M2 同管线）
@@ -165,19 +187,11 @@ public sealed class InferenceJobRunner : BackgroundService
                 : NiftiReader.Read(inputPath);
         var prep = Preprocessor.Run(img, Path.GetFileName(inputPath));
 
-        // 2) 会话（按任务设备）+ 引擎
-        var engine = new VisionEngine(Path.Combine(_modelsDir, "radar_vision.onnx"),
-            ParseDevice(device));
-        try
-        {
-            using var radar = new RadarInferenceEngine(engine, Head,
-                RadarLabels.Organs, TestItems.ToList());
-            var result = radar.Run(prep.Data, prep.D, prep.H, prep.W, TestOrgans);
-            return (result.Probabilities.ToDictionary(p => p.Key, p => p.Value), result.WindowCount);
-        }
-        finally
-        {
-            engine.Dispose();
-        }
+        // 2) 会话（按设备缓存复用）+ 引擎
+        var engine = GetEngine(ParseDevice(device));
+        using var radar = new RadarInferenceEngine(engine, Head,
+            RadarLabels.Organs, TestItems.ToList());
+        var result = radar.Run(prep.Data, prep.D, prep.H, prep.W, TestOrgans);
+        return (result.Probabilities.ToDictionary(p => p.Key, p => p.Value), result.WindowCount);
     }
 }

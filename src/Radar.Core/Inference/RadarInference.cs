@@ -356,5 +356,6 @@ public sealed class RadarInferenceEngine : IDisposable
         return window;
     }
 
-    public void Dispose() => _engine.Dispose();
+    /// <summary>引擎生命周期归调用方管理（支持会话跨任务复用），此处不级联 Dispose。</summary>
+    public void Dispose() { }
 }
