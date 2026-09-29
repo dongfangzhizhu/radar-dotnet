@@ -28,7 +28,7 @@ def main():
 
     missing = [k for k in golden if not any(c.startswith(k + " (") for c in row.keys())]
     diffs = np.array([
-        abs(v - float(next(c for c in row.keys() if c.startswith(k + " ("))))
+        abs(v - float(row[next(c for c in row.keys() if c.startswith(k + " ("))]))
         for k, v in golden.items() if k not in missing
     ])
     print(f"条目匹配: {len(golden) - len(missing)}/{len(golden)}")
