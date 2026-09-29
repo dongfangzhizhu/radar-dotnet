@@ -37,12 +37,12 @@ app.MapGet("/api/devices", (InferenceJobRunner runner) =>
     return Results.Json(list);
 });
 
-// ---- 样例列表（testdata 下 NIfTI 文件） ----
+// ---- 样例列表（testdata 下 NIfTI / DICOM） ----
 app.MapGet("/api/samples", () =>
 {
     if (!Directory.Exists(testdataDir)) return Results.Json(Array.Empty<object>());
-    var samples = Directory.GetFiles(testdataDir, "*.nii.gz")
-        .Concat(Directory.GetFiles(testdataDir, "*.nii"))
+    var samples = new[] { "*.nii.gz", "*.nii", "*.zip", "*.dcm" }
+        .SelectMany(p => Directory.GetFiles(testdataDir, p))
         .Select(p => new { name = Path.GetFileName(p) })
         .ToList();
     return Results.Json(samples);
@@ -62,8 +62,10 @@ app.MapPost("/api/jobs/sample", async (SampleJobRequest req, InferenceJobRunner 
 app.MapPost("/api/jobs/upload", async (IFormFile file, string? device, InferenceJobRunner runner) =>
 {
     if (file.Length == 0) return Results.BadRequest(new { error = "空文件" });
-    if (!file.FileName.EndsWith(".nii") && !file.FileName.EndsWith(".nii.gz"))
-        return Results.BadRequest(new { error = "仅支持 .nii / .nii.gz" });
+    bool ok = file.FileName.EndsWith(".nii") || file.FileName.EndsWith(".nii.gz")
+        || file.FileName.EndsWith(".dcm") || file.FileName.EndsWith(".zip");
+    if (!ok)
+        return Results.BadRequest(new { error = "仅支持 .nii / .nii.gz / .dcm（多帧）/ .zip（DICOM 序列）" });
 
     string uploads = Path.Combine(repoRoot, "uploads");
     Directory.CreateDirectory(uploads);

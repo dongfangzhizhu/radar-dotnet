@@ -155,11 +155,15 @@ public sealed class InferenceJobRunner : BackgroundService
         }
     }
 
-    private (Dictionary<string, double> Probabilities, int Windows) RunInference(string niftiPath, string device)
+    private (Dictionary<string, double> Probabilities, int Windows) RunInference(string inputPath, string device)
     {
-        // 1) NIfTI 读取 + 预处理（与 M2 同管线）
-        var img = NiftiReader.Read(niftiPath);
-        var prep = Preprocessor.Run(img, Path.GetFileName(niftiPath));
+        // 1) 读取（NIfTI / DICOM 单文件多帧 / DICOM zip 序列）+ 预处理（与 M2 同管线）
+        var img = inputPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            ? DicomReader.ReadZip(inputPath)
+            : inputPath.EndsWith(".dcm", StringComparison.OrdinalIgnoreCase)
+                ? DicomReader.ReadFile(inputPath)
+                : NiftiReader.Read(inputPath);
+        var prep = Preprocessor.Run(img, Path.GetFileName(inputPath));
 
         // 2) 会话（按任务设备）+ 引擎
         var engine = new VisionEngine(Path.Combine(_modelsDir, "radar_vision.onnx"),

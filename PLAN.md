@@ -162,7 +162,15 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] 扩展数据集冒烟：merlin 4 例全 PASS（146 条目、无 NaN）
 - [ ] fp16 ONNX 可选路径（待办：需重导 fp16 模型 + 全链路精度复验）
 - **R4 缺口已修复（补推区二次滑窗）**：bbox 超出 ROI 时对 crop+pad 区域做二次滑窗（子窗恒为 96×256×384），skip_organ 保证目标器官在每个子窗均视为非边界、organFeats 缓存保证特征只算一次；数值与 Python 原版"单窗整推"有差（多窗视角），demo case 不触发此路径、146 项硬门禁不受影响。AC4242a2f 由 FAIL 转 PASS。
-- **实测结论（benchmarks.md，Release 构建）**：① 本机 DirectML/CUDA EP 均不可用（AppendExecutionProvider 抛异常回退 Cpu）；② Release demo CPU 端到端 **60.2s**（Debug 120.7s 的一半），ORT 占 86%（51.6s）、手写轻头 0.9s（Debug 5.8s → JIT 优化 6.5 倍）；③ Release 优化未破坏 fp 语义（vs golden max 仍 1.10e-6）；④ 探活必须校验返回的实际 EP（Create 失败会静默回退）。
+- **实测结论（benchmarks.md，Release 构建）**：① DirectML/CUDA 探活当时失败系 Gpu 包缺失（M6 已修复）；② Release demo CPU 端到端 **60.2s**（Debug 120.7s 的一半），ORT 占 86%（51.6s）、手写轻头 0.9s（Debug 5.8s → JIT 优化 6.5 倍）；③ Release 优化未破坏 fp 语义（vs golden max 仍 1.10e-6）；④ 探活必须校验返回的实际 EP（Create 失败会静默回退）。
+
+### M6 — CUDA EP 修复 + DICOM 支持（2026-09-29 追加）✅
+- [x] **CUDA EP 修通**（前次"不可用"结论系包缺失所致）：根因 = 项目只引用了 CPU/DirectML 包，无 `Microsoft.ML.OnnxRuntime.Gpu`（CUDA EP native 库）；包策略改为 Managed + Gpu（Gpu 包自带 CPU EP，原生包二选一勿混用）；`OnnxSessionFactory.EnsureCudaRuntime` 自动探测本机 CUDA 12.x toolkit bin 与 `NVIDIA\CUDNN\v9.*\bin\12.*`（cudart/cublas/cudnn64_9.dll）前插进程 PATH。本机环境：RTX 4090 24GB + CUDA 12.4/12.8/13.0/13.3 + cuDNN 9.17/9.8
+- [x] **CUDA 实测**（Release，demo case 3 窗）：数值 vs golden max=4e-4 mean=2.6e-5（GPU fp32 几乎无 argmax 翻转）；端到端 99.7s（首跑）/104.1s（稳态）——**慢于 CPU 60.2s**，瓶颈是大输出张量（seg_probs 349MB/窗）PCIe 拷贝 + 每 job 会话重建，GPU 加速收益需 IOBinding/会话复用才能兑现（后续项）
+- [x] **DICOM 支持**（`DicomReader.cs`，fo-dicom 5.1）：三种输入——单文件 .dcm（多帧 Enhanced CT）、目录序列（按 ImagePositionPatient 沿法向投影排序）、.zip 序列；RescaleSlope/Intercept → HU；Backend 上传与样例接口同步放宽；前端提示更新
+- [x] **DICOM 对拍**（DicomTests）：testdata/dicom_demo.zip（make_dicom.py 从 AC423ccbe.nii.gz 无损转换，368 切片）读回 HU 与 NIfTI 直读**逐位一致（max_diff=0）**、spacing 一致、预处理输出一致（<1e-5）——DICOM 链路与 NIfTI 链路数值等价
+- [ ] CUDA 性能兑现：IOBinding 预分配 + 会话跨 job 复用（当前数值正确、速度待优化）
+- [ ] DICOM 压缩传输语法（JPEG/JP2 等）暂不支持，需时加 DicomTranscoder 解压
 
 > 总工期估算：**11–15 个工作日**（单人）。M1 硬门槛已于 2026-09-29 通过（4 个 commit）。
 >
