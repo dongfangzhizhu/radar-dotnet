@@ -138,17 +138,18 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] 产出 Python 黄金基线：对 demo case 逐窗 dump（预处理后体数据、每窗 8 输出张量、最终 CSV），存 `testdata/golden/`（gitignore，本地约 2–4 GB，供 .NET 逐级比对）
 - **验收（已达成 2026-09-29）**：向量化 vs 原版 8 输出逐位一致；ONNX vs torch 按分层标准 PASS；golden vs 官方 CSV 146 项全匹配 mean 5.8e-5
 
-### M2 — Radar.Core 预处理 + NIfTI（预计 2–3 天）
-- [ ] NIfTI/.nii.gz 读取器（Nifti.NET 或手写 ~150 行，需支持 gzip 流 + affine 读取 + 数据类型提升）
-- [ ] 预处理管线：spacing→(1,1,5)mm 目标尺寸计算 → ORT 重采样子图 → HU clip → min-max 归一化 → 非零域裁剪 + (5,20,20) 外扩 → 尾部 pad (96,256,384)
-- **验收**：预处理输出张量与黄金基线逐元素 diff < 1e-5（xUnit 用例）
+### M2 — Radar.Core 预处理 + NIfTI（预计 2–3 天）✅ 2026-09-29
+- [x] NIfTI/.nii.gz 手写读取器（gzip 流 + sform/qform affine + 8 种数据类型）
+- [x] 预处理管线：spacing→(1,1,5)mm 目标尺寸 → C# 手写 fp32 三线性重采样（与 torch CPU kernel 逐位一致，`export/verify_trilinear.py` 钉死公式）→ HU clip → min-max 归一化 → 非零域裁剪 + (5,20,20) 外扩 → 尾部 pad（SpatialPadd 只 pad 不 crop，`Math.Max(cd, TargetD)`）
+- **验收（已达成）**：预处理输出与黄金基线 mismatch=0（逐元素 diff < 1e-5）
 
-### M3 — 滑窗推理与器官头（预计 3–4 天）
-- [ ] ORT Session 封装（EP 注入、IOBinding、预分配 pinned buffer）
-- [ ] 滑窗调度（dense_patch_slices 等价实现，overlap 0.25）+ 概率累加 + argmax 拼接
-- [ ] C# 器官头：MHA（4 头，手写 softmax(QKᵀ/√64)V）→ vision_projs → L2 → 点积/温度 → softmax
-- [ ] 边界器官排除（margin=2）+ 缺失器官 center_crop 补推
-- **验收**：① 每窗 8 张量 vs 黄金基线 diff < 1e-4；② 单器官概率 diff < 1e-3；③ demo case 最终 146 值全部 diff < 1e-3
+### M3 — 滑窗推理与器官头（预计 3–4 天）✅ 2026-09-29
+- [x] ORT Session 封装（EP 回退 CUDA→DirectML→CPU，NamedOnnxValue API）
+- [x] 滑窗调度（dense_patch_slices 等价，overlap 0.25）+ 概率累加 + argmax 拼接
+- [x] C# 器官头：手写 MHA（关键坑：torch F.linear 合并 K/V 输出是**行内列拼接** [K_j|V_j]，非行分块；修正后特征 diff 0.25→5e-5）
+- [x] 边界器官排除（margin=2）+ 缺失器官 center_crop 补推（坑：裁剪体素必须来自 CT volume，mask 只用于定位 bbox）
+- [x] 黄金基线 V2：视觉主干 ORT CPU + numpy 手写 MHA + numpy 三线性（与 .NET 同数值路径；坑：pred_mask (1,96,256,384) 漏剥 batch 维会使边界器官全集、intact 恒空，v1↔v2 mean 偏差 1.1e-2 → 修复后 2.3e-5）
+- **验收（已达成）**：① 每窗 8 张量对齐 golden；② 端到端 146/146 匹配 max_diff=5.96e-7（门禁 1e-3），CPU 端到端 119s；③ v2 基线 vs 官方 CSV mean=7.4e-5 PASS、vs v1 torch 路径 mean=2.3e-5；全量测试 6/6 通过
 
 ### M4 — Radar.Backend + Web 测试端（预计 2–3 天）
 - [ ] 任务队列（Channel，GPU 单 worker）、文件上传/暂存、结果缓存
