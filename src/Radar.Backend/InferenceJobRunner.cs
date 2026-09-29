@@ -16,6 +16,10 @@ public class JobRecord
     public required string Id { get; init; }
     public required string FileName { get; init; }
     public required string Device { get; init; }
+    /// <summary>推理模型：radar（器官路径）| radar_plus（全图疾病路径）。</summary>
+    public string Model { get; init; } = "radar";
+    /// <summary>radar_plus 权重变体：pretrain | merlin_ft。</summary>
+    public string Variant { get; init; } = "merlin_ft";
     public JobStatus Status { get; set; } = JobStatus.Queued;
     public DateTime CreatedAt { get; init; } = DateTime.Now;
     public DateTime? StartedAt { get; set; }
@@ -64,6 +68,9 @@ public sealed class InferenceJobRunner : BackgroundService
     // 模型会话按 EP 缓存、跨任务复用（单 worker 串行，无并发竞争）——
     // CUDA 会话重建成本高（上下文/算子选择），复用是 GPU 路径提速的关键之一
     private readonly Dictionary<ExecutionDevice, VisionEngine> _engineCache = new();
+
+    // RADAR+ whole head 按变体缓存（pretrain / merlin_ft 各一套权重+文本特征）
+    private readonly Dictionary<string, PlusHead> _plusHeadCache = new();
 
     private VisionEngine GetEngine(ExecutionDevice device)
     {
@@ -124,13 +131,16 @@ public sealed class InferenceJobRunner : BackgroundService
 
     // ---- 入队 ----
 
-    public async Task<JobRecord> EnqueueAsync(string filePath, string fileName, string device)
+    public async Task<JobRecord> EnqueueAsync(string filePath, string fileName, string device,
+        string model = "radar", string variant = "merlin_ft")
     {
         var job = new JobRecord
         {
             Id = Guid.NewGuid().ToString("N")[..12],
             FileName = fileName,
             Device = device.ToLowerInvariant(),
+            Model = model.ToLowerInvariant(),
+            Variant = variant.ToLowerInvariant(),
             FilePath = filePath,
         };
         _jobs[job.Id] = job;
@@ -149,7 +159,9 @@ public sealed class InferenceJobRunner : BackgroundService
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var (probs, windows) = RunInference(job.FilePath!, job.Device);
+                var (probs, windows) = job.Model == "radar_plus"
+                    ? RunPlusInference(job.FilePath!, job.Device, job.Variant)
+                    : RunInference(job.FilePath!, job.Device);
                 job.Probabilities = probs;
                 job.WindowCount = windows;
                 job.Status = JobStatus.Completed;
@@ -193,5 +205,37 @@ public sealed class InferenceJobRunner : BackgroundService
             RadarLabels.Organs, TestItems.ToList());
         var result = radar.Run(prep.Data, prep.D, prep.H, prep.W, TestOrgans);
         return (result.Probabilities.ToDictionary(p => p.Key, p => p.Value), result.WindowCount);
+    }
+
+    /// <summary>radar_plus 任务：merlin 预处理变体 + 单窗整推 + whole head 打分。</summary>
+    private (Dictionary<string, double> Probabilities, int Windows) RunPlusInference(
+        string inputPath, string device, string variant)
+    {
+        var img = inputPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+            ? DicomReader.ReadZip(inputPath)
+            : inputPath.EndsWith(".dcm", StringComparison.OrdinalIgnoreCase)
+                ? DicomReader.ReadFile(inputPath)
+                : NiftiReader.Read(inputPath);
+        var prep = PlusPreprocessor.Run(img, Path.GetFileName(inputPath));
+
+        var engine = GetEngine(ParseDevice(device));
+        var head = GetPlusHead(variant);
+        var plus = new RadarPlusEngine(engine, head);
+        var result = plus.Run(prep.Data);
+        var probs = result.Probabilities.ToDictionary(p => p.Key, p => (double)p.Value);
+        return (probs, 1);
+    }
+
+    private PlusHead GetPlusHead(string variant)
+    {
+        if (_plusHeadCache.TryGetValue(variant, out var head)) return head;
+        string suffix = variant == "pretrain" ? "" : "_merlin_ft";
+        head = new PlusHead(
+            PlusHeadWeights.Load(Path.Combine(_modelsDir, $"plus_head{suffix}.npz")),
+            PlusTextFeatures.Load(
+                Path.Combine(_modelsDir, $"plus_text_feats{suffix}.bin"),
+                Path.Combine(_modelsDir, $"plus_text_feats{suffix}.json")));
+        _plusHeadCache[variant] = head;
+        return head;
     }
 }

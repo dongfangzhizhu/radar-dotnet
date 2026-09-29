@@ -174,6 +174,17 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] **部署双变体（DirectML + CUDA）**：ORT 同进程只能加载一个 onnxruntime.dll（DML build 与 CUDA build 互斥），csproj 按 `-p:OnnxEp=Cuda|Dml` 条件选择原生包变体（Cuda=Gpu 1.30 / Dml=DirectML 1.24.4，托管层版本跟随），部署时按目标机器 GPU 类型选产物；本机验证 DML 变体探活 `DirectMl: OK（实际 EP = DirectMl）`
 - [ ] DICOM 有损压缩（JPEG 有损族）精度影响评估（当前无损族已覆盖）
 
+### M7 — radar_plus 系列权重迁移（2026-09-29 追加）✅
+- [x] **权重结构探明**（probe_plus_ckpt.py）：两个 checkpoint（`checkpoint_radar_plus.pth` pretrain / `checkpoint_radar_plus_finetuned_on_merlin.pth` merlin_ft）各含 8 个 whole-head 键（attention_whole.in_proj (768,256) Q|K|V 行序同器官头、vision_projs_whole (256,256)、query_tokens_whole (1,256)、temp 标量）+ text_proj (256,768) + text_encoder 199 键（BLIP med.py 裁剪版 BertModel：无 token_type_embeddings、无 pooler）。temp 两套不同（pretrain=0.053180 / merlin_ft=0.041191），故权重+文本特征各导一套
+- [x] **导出脚本**（export/export_plus.py）：`models/plus_head{,_merlin_ft}.npz`（329217 参数/1.26MB）+ `models/plus_text_feats{,_merlin_ft}.bin/.json`（9 疾病 134 条 prompt 特征，HF BertTokenizer + BertModel(ckpt text_encoder 权重, token_type_embeddings 清零) + text_proj + L2 norm；缺失/多余键集合精确断言）
+- [x] **merlin 预处理变体**（`PlusPreprocessor.cs`）：与器官路径差异 = ① 无非零域裁剪，SpatialPad(end)→CenterSpatialCrop（monai 取中 start=size//2−target//2）；② clip ±1000（原 [-300,400]）；③ min-max 归一无 1e-8；④ clip/归一在 pad/crop 之后。对拍 vs monai 黄金体积 max_diff<1e-5
+- [x] **whole-image 引擎**（`PlusHead.cs` + `RadarPlusInference.cs`）：x1|x2|x3 全量拼接（84096 token）→ 4 头 attention → vision_projs_whole → L2 norm → 与 9 疾病多 prompt 特征点积/temp → pos/neg 分组均值 → softmax。KV 打分用恒等式 u=W_kᵀq_h 先行（对 84k token 的 512 维展开 ~11G 乘加降为 ~0.4G）
+- [x] **踩坑记录**：优化式首版漏掉 attention 缩放 `/√head_dim`（OrganHead.Mha 有此步），feature diff 高达 0.156；逐层隔离定位（score/attn/out_h 各自对拍）后补上，恢复 1e-5 级。教训：跨实现移植 MHA 必须逐式清单化（scale/softmax/mask 三件套）
+- [x] **黄金对拍**（export/plus_golden.py → testdata/golden/plus_golden_*.json，ORT CPU + numpy 朴素 whole head）：PlusTests 4 项全过——merlin_ft feature max_diff=2.4e-5 / prob max_diff=1.3e-4；pretrain feature 6.3e-7 / prob 9.7e-7（门限 1e-4 / 1e-3）
+- [x] **后端 + Web 接入**：JobRunner 支持 `model=radar|radar_plus` + `variant=pretrain|merlin_ft`（whole head 按变体缓存）；API `/api/jobs/*` 透传；前端加「推理模型 / 权重变体」选择器与模型列
+- [x] **测试基建**：测试并行禁用（重测试各自 ONNX 会话并行跑触发 BFCArena 1.2GB OOM）；全量 12/12 PASS（5m23s）
+- [ ] fp16 ONNX 可选路径（延续 M5 待办）
+
 > 总工期估算：**11–15 个工作日**（单人）。M1 硬门槛已于 2026-09-29 通过（4 个 commit）。
 >
 > **M1 实测结论**：① 向量化改造与原版逐位一致（8 输出 diff=0）；② ONNX 导出 PASS（res_x < 1.5e-5、pred_mask 不匹配 3/9.4M、flags 全等）；③ 官方 CSV 软参考 PASS（146 项全匹配 mean 5.8e-5）；④ 本机 CUDA 可用（golden dump GPU 秒级）。
@@ -232,7 +243,7 @@ EP 选择策略（`Radar.Core/Configuration`）：
 
 ## 10. 待确认清单
 
-- [ ] 部署目标机 GPU 型号（决定 DirectML vs CUDA 主路径，影响 M5 基准口径）
-- [ ] merlin_data_train_demo 是否够用，是否需要申请 MERLIN 完整测试集（影响 M5 冒烟覆盖面）
-- [ ] Web 端是否需要鉴权（内网测试工具默认无鉴权）
-- [ ] radar_plus 系列权重的迁移排期（管线已预留，未列入本期）
+- [x] ~~部署目标机 GPU 型号~~（2026-09-29 已确认：同时支持 DirectML 与 CUDA，双变体构建已落地，见 M6）
+- [x] ~~merlin_data_train_demo 是否够用~~（2026-09-29 已确认：够用，M5 冒烟 4 例 + M7 golden 均基于现有数据）
+- [x] ~~Web 端是否需要鉴权~~（2026-09-29 已确认：仅功能演示，无需鉴权，维持现状）
+- [x] ~~radar_plus 系列权重的迁移排期~~（2026-09-29 已完成，见 M7）

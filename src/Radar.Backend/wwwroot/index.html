@@ -58,6 +58,20 @@
     <h2>① 新建任务</h2>
     <div class="row">
       <div class="field">
+        <label>推理模型</label>
+        <select id="model" onchange="onModelChange()">
+          <option value="radar">RADAR（器官级 · 146 项）</option>
+          <option value="radar_plus">RADAR+（全图 · 9 疾病）</option>
+        </select>
+      </div>
+      <div class="field" id="variantField" style="display:none">
+        <label>权重变体</label>
+        <select id="variant">
+          <option value="merlin_ft">merlin 微调（推荐）</option>
+          <option value="pretrain">pretrain（从零训练）</option>
+        </select>
+      </div>
+      <div class="field">
         <label>计算设备</label>
         <select id="device"><option value="cpu">cpu</option></select>
       </div>
@@ -79,8 +93,8 @@
   <div class="panel">
     <h2>② 任务队列（2 秒自动刷新）</h2>
     <table>
-      <thead><tr><th>任务 ID</th><th>文件</th><th>设备</th><th>状态</th><th>耗时</th><th>窗数</th><th></th></tr></thead>
-      <tbody id="jobRows"><tr><td colspan="7" class="muted">暂无任务</td></tr></tbody>
+      <thead><tr><th>任务 ID</th><th>文件</th><th>模型</th><th>设备</th><th>状态</th><th>耗时</th><th>窗数</th><th></th></tr></thead>
+      <tbody id="jobRows"><tr><td colspan="8" class="muted">暂无任务</td></tr></tbody>
     </table>
   </div>
 
@@ -117,11 +131,16 @@ async function init() {
   pollJobs();
 }
 
+function onModelChange() {
+  $('variantField').style.display = $('model').value === 'radar_plus' ? '' : 'none';
+}
+
 async function runSample() {
   $('submitErr').textContent = '';
   const r = await fetch('/api/jobs/sample', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ sample: $('sample').value, device: $('device').value })
+    body: JSON.stringify({ sample: $('sample').value, device: $('device').value,
+      model: $('model').value, variant: $('variant').value })
   });
   if (!r.ok) $('submitErr').textContent = (await r.json()).error || '提交失败';
   else pollJobs();
@@ -133,7 +152,8 @@ async function runUpload() {
   if (!f) { $('submitErr').textContent = '请先选择文件'; return; }
   const fd = new FormData();
   fd.append('file', f);
-  const r = await fetch(`/api/jobs/upload?device=${$('device').value}`, { method: 'POST', body: fd });
+  const r = await fetch(`/api/jobs/upload?device=${$('device').value}&model=${$('model').value}&variant=${$('variant').value}`,
+    { method: 'POST', body: fd });
   if (!r.ok) $('submitErr').textContent = (await r.json()).error || '上传失败';
   else { $('file').value = ''; pollJobs(); }
 }
@@ -141,13 +161,14 @@ async function runUpload() {
 async function pollJobs() {
   jobsCache = await (await fetch('/api/jobs')).json();
   const tb = $('jobRows');
-  if (!jobsCache.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">暂无任务</td></tr>'; return; }
+  if (!jobsCache.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">暂无任务</td></tr>'; return; }
   const running = jobsCache.filter(j => j.Status === 'Running' || j.Status === 'Queued').length;
   $('barFill').style.width = running ? '60%' : '0';
   tb.innerHTML = jobsCache.map(j => `
     <tr>
       <td class="muted">${j.Id}</td>
       <td>${j.FileName}</td>
+      <td>${j.Model === 'radar_plus' ? 'RADAR+' : 'RADAR'}${j.Model === 'radar_plus' ? '·' + (j.Variant || '') : ''}</td>
       <td>${j.Device}</td>
       <td><span class="tag ${j.Status}">${jobCn(j.Status)}</span></td>
       <td class="prob-cell">${j.ElapsedMs ? (j.ElapsedMs / 1000).toFixed(1) + ' s' : '-'}</td>

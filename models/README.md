@@ -8,11 +8,19 @@
 | `radar_vision.onnx` | `python ../export/export_onnx.py` | 视觉主干，opset 17，固定输入 (1,1,96,256,384)，8 输出 | 98.9 MB |
 | `organ_head.npz` | `python ../export/export_weights.py` | 轻头权重 78 键（MHA in_proj Q\|K\|V 布局 + 36×vision_projs + query_tokens + temp） | 10.07 MB |
 | `text_feats.bin` + `text_feats.json` | `python ../export/export_text_feats.py` | 146 项 × (2,256) 预计算文本特征，连续 float32 + json 索引（C# 零依赖解析） | 292 KB |
+| `plus_head.npz` | `python ../export/export_plus.py` | RADAR+ whole-head 权重 8 键（pretrain 变体，temp=0.053180） | 1.26 MB |
+| `plus_head_merlin_ft.npz` | 同上 | RADAR+ whole-head 权重 8 键（merlin 微调变体，temp=0.041191） | 1.26 MB |
+| `plus_text_feats.bin` + `.json` | 同上 | 9 疾病 134 条 prompt 文本特征（pretrain 变体，含 num_positive/start/count） | 134 KB |
+| `plus_text_feats_merlin_ft.bin` + `.json` | 同上 | 同上（merlin 微调变体） | 134 KB |
 
 上游依赖（不在本仓库，缺失则无法重建）：
 - `../RADAR/checkpoint_radar_pretrain.pth`（1.49 GB，HuggingFace）
+- `../RADAR/checkpoint_radar_plus.pth`（1.57 GB，M7 RADAR+ pretrain）
+- `../RADAR/checkpoint_radar_plus_finetuned_on_merlin.pth`（1.57 GB，M7 RADAR+ merlin 微调）
+- `../RADAR/bert-base-uncased/`（文本特征计算用 tokenizer + BertConfig）
 - `../damo-radar/ckpt/infer_text_embedding_radar.pt`（338 KB）
 - `../damo-radar/RADAR_inference/`（网络结构源码，export 脚本 sys.path 引用）
+- `../damo-radar/RADAR_train/`（M7 文本特征复刻 infer_merlin_whole.py 的 prompt 清单与编码参数）
 
 对拍结论（2026-09-29，全部 PASS，详见各 export 脚本与 PLAN.md）：
 - 向量化 vs 原版：8 输出 diff = 0

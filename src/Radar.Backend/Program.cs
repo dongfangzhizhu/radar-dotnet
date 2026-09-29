@@ -54,12 +54,14 @@ app.MapPost("/api/jobs/sample", async (SampleJobRequest req, InferenceJobRunner 
     string path = Path.Combine(testdataDir, req.Sample ?? "");
     if (string.IsNullOrEmpty(req.Sample) || !File.Exists(path))
         return Results.BadRequest(new { error = $"样例不存在: {req.Sample}" });
-    var job = await runner.EnqueueAsync(path, req.Sample, req.Device ?? "cpu");
+    var job = await runner.EnqueueAsync(path, req.Sample, req.Device ?? "cpu",
+        req.Model ?? "radar", req.Variant ?? "merlin_ft");
     return Results.Ok(new { jobId = job.Id });
 });
 
 // ---- 上传建任务 ----
-app.MapPost("/api/jobs/upload", async (IFormFile file, string? device, InferenceJobRunner runner) =>
+app.MapPost("/api/jobs/upload", async (IFormFile file, string? device, string? model,
+    string? variant, InferenceJobRunner runner) =>
 {
     if (file.Length == 0) return Results.BadRequest(new { error = "空文件" });
     bool ok = file.FileName.EndsWith(".nii") || file.FileName.EndsWith(".nii.gz")
@@ -73,7 +75,8 @@ app.MapPost("/api/jobs/upload", async (IFormFile file, string? device, Inference
     await using var fs = File.Create(path);
     await file.CopyToAsync(fs);
 
-    var job = await runner.EnqueueAsync(path, file.FileName, device ?? "cpu");
+    var job = await runner.EnqueueAsync(path, file.FileName, device ?? "cpu",
+        model ?? "radar", variant ?? "merlin_ft");
     return Results.Ok(new { jobId = job.Id });
 }).DisableAntiforgery();
 
@@ -100,10 +103,10 @@ app.MapGet("/api/jobs/{id}/csv", (string id, InferenceJobRunner runner) =>
 
 static object JobView(JobRecord j) => new
 {
-    j.Id, j.FileName, j.Device, j.Status, j.CreatedAt, j.StartedAt,
+    j.Id, j.FileName, j.Device, j.Model, j.Variant, j.Status, j.CreatedAt, j.StartedAt,
     j.FinishedAt, j.ElapsedMs, j.WindowCount, j.Probabilities, j.Error,
 };
 
 app.Run();
 
-record SampleJobRequest(string? Sample, string? Device);
+record SampleJobRequest(string? Sample, string? Device, string? Model, string? Variant);

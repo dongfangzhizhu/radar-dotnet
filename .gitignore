@@ -39,3 +39,11 @@ testdata/golden/*.npz
 testdata/golden/*.json
 testdata/golden/windows/
 *.exit
+
+# 探针/临时产物与扩展 ignore
+models/*.bin
+models/*.json
+testdata/_dicom_tmp/
+build_*.done
+export/v1v2_compare*.txt
+probe_*.txt
