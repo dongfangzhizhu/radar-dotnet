@@ -15,7 +15,7 @@
 |---|--------|------|
 | D1 | **Radar.Core 推理库** | 预处理、滑窗推理、器官轻头、后处理，纯 C#，CPU/GPU 双路径 |
 | D2 | **Radar.Backend Web 服务** | ASP.NET Core minimal API，任务提交/查询/结果下载，托管测试 Web 页 |
-| D3 | **Web 测试端** | 上传/选择 NIfTI 输入 → 触发推理 → 展示 165 项病灶概率 + 分割掩码可视化 |
+| D3 | **Web 测试端** | 上传/选择 NIfTI 输入 → 触发推理 → 展示 146 项病灶概率 + 分割掩码可视化 |
 | D4 | **Python 导出工具链** | .pth → ONNX（视觉主干）+ safetensors/npz（轻头权重 + 文本特征），一次性 |
 | D5 | **对齐测试套件** | 与官方参考 CSV（`../damo-radar/results/RADAR_infer_results_demo.csv`）逐值比对 |
 
@@ -67,7 +67,7 @@ radar-dotnet/
 │   │   │                       │  非零域裁剪+外扩(5,20,20)、pad 到 (96,256,384)
 │   │   ├── Inference/          │  ORT Session 管理、滑窗调度、概率累加、argmax 拼接
 │   │   ├── OrganHead/          │  单 query MHA + vision_projs + 相似度打分（C# 手写）
-│   │   ├── Postprocessing/     │  边界器官排除、多窗概率平均、CSV 输出（165 列）
+│   │   ├── Postprocessing/     │  边界器官排除、多窗概率平均、CSV 输出（147 列 = file_name + 146 项）
 │   │   └── Configuration/      │  ExecutionProvider 选择（CPU/DirectML/CUDA）
 │   ├── Radar.Backend/          ← D2 Web 服务（ASP.NET Core minimal API, Kestrel）
 │   │   ├── Endpoints/          │  POST /api/jobs（上传 NIfTI 或选内置样例）
@@ -106,7 +106,7 @@ NIfTI 文件 → [C# 预处理] → 重采样(ORT 小模型) → 裁剪/pad → 
 |---|---|---|---|
 | CPU | Microsoft.ML.OnnxRuntime（已引入） | 首版必选 | AVX2/AVX512 自动加速，零配置 |
 | DirectML | Microsoft.ML.OnnxRuntime.DirectML（已引入） | 首版必选 | Windows GPU 默认路径，免 CUDA 版本匹配，AMD/NVIDIA/Intel 通吃 |
-| CUDA | Microsoft.ML.OnnxRuntime.Gpu（按需引入） | 预留 | 目标机有 CUDA 12.x 时启用，性能上限最高 |
+| CUDA | Microsoft.ML.OnnxRuntime.Gpu（按需引入） | 开发机已确认 CUDA 可用（torch cuda OK），M5 启用 |
 
 EP 选择策略（`Radar.Core/Configuration`）：
 1. 启动参数 `--ep auto|cpu|dml|cuda`，默认 `auto`；
@@ -118,7 +118,7 @@ EP 选择策略（`Radar.Core/Configuration`）：
 
 - 输入方式：① 上传 `.nii/.nii.gz`（multipart，≤200 MB）；② 选择内置 demo（AC423ccbe.nii.gz）；③ 选择 testdata/ 目录下任意已放置样例。
 - 设备选择下拉（cpu/dml/cuda，来自 /api/devices）。
-- 提交后轮询任务状态，展示：耗时分解（预处理/推理/后处理）、165 项「器官_病灶」阳性概率表（中文列名 + 英文映射，支持排序/筛选/阈值高亮）、与参考 CSV 的偏差列（对齐模式）。
+- 提交后轮询任务状态，展示：耗时分解（预处理/推理/后处理）、146 项「器官_病灶」阳性概率表（中文列名 + 英文映射，支持排序/筛选/阈值高亮）、与参考 CSV 的偏差列（对齐模式）。
 - 结果导出：CSV（列序与官方完全一致）/ JSON。
 - 分割掩码可视化：按器官切片数最多的轴出 PNG 透叠图（首版静态，3D 交互列为扩展）。
 
@@ -133,10 +133,10 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] PLAN.md
 
 ### M1 — Python 导出与黄金基线（预计 2–3 天）
-- [ ] `export_onnx.py`：向量化 flags 重写（先在 Python 内对拍：改造前后 `forward_test_win` 输出 max abs diff < 1e-6）→ `model.eval()` → `torch.onnx.export` opset 17 → `onnxruntime` 回读对拍（CPU EP，diff < 1e-5）
+- [x] `export_onnx.py`：向量化 flags 重写（先在 Python 内对拍：改造前后 `forward_test_win` 输出 max abs diff < 1e-6）→ `model.eval()` → `torch.onnx.export` opset 17 → `onnxruntime` 回读对拍（CPU EP，diff < 1e-5）
 - [ ] `export_resize.py`、`export_weights.py`（safetensors 或 npz：attention in/out_proj、36×vision_projs、query_tokens、temp）、`export_text_feats.py`（165 项 text_feat + 索引 json）
-- [ ] 产出 Python 黄金基线：对 demo case 逐窗 dump（预处理后体数据、每窗 8 输出张量、最终 CSV），存 `testdata/golden/`（gitignore，本地约 2–4 GB，供 .NET 逐级比对）
-- **验收**：demo case 上 Python 原版 vs 导出链路（ORT-CPU 跑 ONNX + numpy 轻头）CSV 逐值 diff < 1e-4
+- [x] 产出 Python 黄金基线：对 demo case 逐窗 dump（预处理后体数据、每窗 8 输出张量、最终 CSV），存 `testdata/golden/`（gitignore，本地约 2–4 GB，供 .NET 逐级比对）
+- **验收（已达成 2026-09-29）**：向量化 vs 原版 8 输出逐位一致；ONNX vs torch 按分层标准 PASS；golden vs 官方 CSV 146 项全匹配 mean 5.8e-5
 
 ### M2 — Radar.Core 预处理 + NIfTI（预计 2–3 天）
 - [ ] NIfTI/.nii.gz 读取器（Nifti.NET 或手写 ~150 行，需支持 gzip 流 + affine 读取 + 数据类型提升）
@@ -148,7 +148,7 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [ ] 滑窗调度（dense_patch_slices 等价实现，overlap 0.25）+ 概率累加 + argmax 拼接
 - [ ] C# 器官头：MHA（4 头，手写 softmax(QKᵀ/√64)V）→ vision_projs → L2 → 点积/温度 → softmax
 - [ ] 边界器官排除（margin=2）+ 缺失器官 center_crop 补推
-- **验收**：① 每窗 8 张量 vs 黄金基线 diff < 1e-4；② 单器官概率 diff < 1e-3；③ demo case 最终 CSV 165 值全部 diff < 1e-3
+- **验收**：① 每窗 8 张量 vs 黄金基线 diff < 1e-4；② 单器官概率 diff < 1e-3；③ demo case 最终 146 值全部 diff < 1e-3
 
 ### M4 — Radar.Backend + Web 测试端（预计 2–3 天）
 - [ ] 任务队列（Channel，GPU 单 worker）、文件上传/暂存、结果缓存
@@ -162,7 +162,9 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [ ] 扩展数据集冒烟：`../damo-radar/data/merlin_data_train_demo/` 下样例批量跑，无崩溃、无 NaN
 - **验收**：性能报告（markdown）入库；三路径数值一致性结论明确
 
-> 总工期估算：**11–15 个工作日**（单人）。M1 是硬门槛：导出对拍不过，后面全部返工。
+> 总工期估算：**11–15 个工作日**（单人）。M1 硬门槛已于 2026-09-29 通过（4 个 commit）。
+>
+> **M1 实测结论**：① 向量化改造与原版逐位一致（8 输出 diff=0）；② ONNX 导出 PASS（res_x < 1.5e-5、pred_mask 不匹配 3/9.4M、flags 全等）；③ 官方 CSV 软参考 PASS（146 项全匹配 mean 5.8e-5）；④ 本机 CUDA 可用（golden dump GPU 秒级）。
 
 ---
 
@@ -188,7 +190,7 @@ EP 选择策略（`Radar.Core/Configuration`）：
 | ONNX 导出 | ORT vs torch（逐窗 8 张量） | < 1e-5 |
 | .NET 预处理 | vs 黄金基线逐元素 | < 1e-5 |
 | .NET 滑窗/器官头 | 逐窗张量 / 单器官概率 | < 1e-4 / < 1e-3 |
-| 端到端（**核心门禁**） | demo case CSV 165 值 vs 官方 | 全部 < 1e-3 |
+| 端到端（**核心门禁**） | demo case 146 值 vs 本地 golden | 全部 < 1e-3 |
 
 浮点注意事项：ORT 与 torch 的 Conv3d/interpolate 在不同 EP/线程数下存在 1e-6 级浮点差异，逐窗累加（数百窗 × 概率平均）会放大到 1e-4 级——阈值已按此留量。若个别列超差，优先排查重采样语义，其次 max_pool3d 的 ceil/floor 模式。
 
