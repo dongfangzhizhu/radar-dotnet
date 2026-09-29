@@ -38,3 +38,4 @@ testdata/golden/*.npy
 testdata/golden/*.npz
 testdata/golden/*.json
 testdata/golden/windows/
+*.exit

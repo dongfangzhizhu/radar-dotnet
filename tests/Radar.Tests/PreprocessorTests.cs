@@ -1,5 +1,6 @@
 using Radar.Core.Nifti;
 using Radar.Core.Preprocessing;
+using Radar.Core.Support;
 using Radar.Tests.Support;
 using Xunit.Abstractions;
 

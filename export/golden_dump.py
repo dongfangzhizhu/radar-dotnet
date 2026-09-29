@@ -163,8 +163,13 @@ def _main_impl():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"device = {device}")
 
-    from vec_vision_branch import build_vectorized
-    model = build_vectorized().to(device)
+    import onnxruntime as ort
+    from verify_trilinear import trilinear_resize
+
+    # 黄金基线 v2：视觉主干用 ORT CPU（与 .NET 同一模型文件同一 EP），
+    # 轻头用 numpy 手写（与 C# 逐式对应）。torch/monai 仅用于预处理。
+    sess = ort.InferenceSession(str(MODELS_DIR / "radar_vision.onnx"), providers=["CPUExecutionProvider"])
+    OUT_NAMES = ["seg_probs", "pred_mask", "res_x1", "res_x2", "res_x3", "flags1", "flags2", "flags3"]
 
     test_items = extract_test_items()
     print(f"test_items 共 {len(test_items)} 项")
@@ -202,7 +207,14 @@ def _main_impl():
     # 器官轻头权重（来自 organ_head.npz，M1-3 产物）；MHA 手写实现与 C# 端同一算法形态
     import math
     z = np.load(str(MODELS_DIR / "organ_head.npz"))
-    qt = torch.from_numpy(z["query_tokens"]).to(device)                      # (36,256)
+    qt = torch.from_numpy(z["query_tokens"]).to(device)
+    query_tokens = z["query_tokens"].astype(np.float32)
+    in_proj_w = z["attention.in_proj_weight"].astype(np.float32)
+    in_proj_b = z["attention.in_proj_bias"].astype(np.float32)
+    out_w = z["attention.out_proj.weight"].astype(np.float32)
+    out_b = z["attention.out_proj.bias"].astype(np.float32)
+    proj_w = np.stack([z[f"vision_projs.{i}.weight"] for i in range(N_ORGANS)]).astype(np.float32)
+    proj_b = np.stack([z[f"vision_projs.{i}.bias"] for i in range(N_ORGANS)]).astype(np.float32)                      # (36,256)
     ipw = torch.from_numpy(z["attention.in_proj_weight"]).to(device)         # (768,256) Q|K|V
     ipb = torch.from_numpy(z["attention.in_proj_bias"]).to(device)
     ow = torch.from_numpy(z["attention.out_proj.weight"]).to(device)         # (256,256)
@@ -231,73 +243,130 @@ def _main_impl():
     count_map = torch.zeros_like(full_mask)
     seg_probs_all = {}
 
+    import math as _math
+
+    def linear(x, W, B):
+        """fp32 线性层：y[r,o] = b[o] + sum_d x[r,d]*W[o,d]（与 C# Linear 累加顺序一致）。"""
+        rows = x.shape[0]
+        inD, outD = W.shape[1], W.shape[0]
+        y = np.empty((rows, outD), dtype=np.float32)
+        for r in range(rows):
+            for o in range(outD):
+                acc = np.float32(B[o])
+                xb = x[r]
+                wb = W[o]
+                for d in range(inD):
+                    acc += np.float32(xb[d] * wb[d])
+                y[r, o] = acc
+        return y
+
+    def organ_head_forward(oid, key):
+        """手写 MHA + vision_proj + L2（与 C# OrganHead 逐式对应）。key (K,256)。"""
+        K = key.shape[0]
+        q = linear(query_tokens[oid:oid + 1], in_proj_w[:256], in_proj_b[:256])[0]     # (256,)
+        kv = linear(key, in_proj_w[256:768], in_proj_b[256:768])                        # (K,512) 列拼接 K|V
+        kmat = kv[:, :256]
+        vmat = kv[:, 256:]
+        outp = np.empty(256, dtype=np.float32)
+        for h in range(4):
+            off = h * 64
+            attn = np.empty(K, dtype=np.float32)
+            mx = -np.inf
+            for j in range(K):
+                sacc = np.float32(0)
+                for d in range(64):
+                    sacc += np.float32(q[off + d] * kmat[j, off + d])
+                sacc = np.float32(sacc / np.float32(8.0))
+                attn[j] = sacc
+                if sacc > mx:
+                    mx = sacc
+            sm = np.float32(0)
+            for j in range(K):
+                attn[j] = np.float32(np.exp(attn[j] - mx))
+                sm += attn[j]
+            for j in range(K):
+                attn[j] /= sm
+            for d in range(64):
+                acc = np.float32(0)
+                for j in range(K):
+                    acc += np.float32(attn[j] * vmat[j, off + d])
+                outp[off + d] = acc
+        o = linear(outp[None, :], out_w, out_b)[0]
+        f = linear(o[None, :], proj_w[oid], proj_b[oid])[0]
+        nrm = np.float32(np.sqrt(np.sum(f * f)))
+        return (f / nrm).astype(np.float32)
+
     def forward_test_win(images, organ_logits, skip_organ=None, win_tag=None):
-        """逐行复刻原版 RADAR.forward_test_win（模型换为已验证的向量化版）。"""
-        outs = model(images)
+        """numpy 版 forward_test_win：ORT 视觉 + 手写轻头，与 C# RadarInferenceEngine 同构。"""
+        feed = {"x": images.cpu().numpy()}
+        o_seg, o_mask, o_x1, o_x2, o_x3, o_f1, o_f2, o_f3 = sess.run(OUT_NAMES, feed)
         if win_tag is not None:
             wd = GOLDEN / "windows" / win_tag
             wd.mkdir(exist_ok=True)
             np.save(wd / "win_in.npy", images.cpu().numpy().astype(np.float32))
-            for name, t in zip(
-                ["seg_probs", "pred_mask", "res_x1", "res_x2", "res_x3", "flags1", "flags2", "flags3"], outs
-            ):
-                np.save(wd / f"{name}.npy", t.cpu().numpy())
+            for name, arr in zip(OUT_NAMES, [o_seg, o_mask, o_x1, o_x2, o_x3, o_f1, o_f2, o_f3]):
+                np.save(wd / f"{name}.npy", arr)
 
-        seg_probs = outs[0]
-        masks = outs[1].long()
-        embeds1, embeds2, embeds3 = outs[2], outs[3], outs[4]
-        flags1, flags2, flags3 = outs[5], outs[6], outs[7]
+        seg_prob_t = torch.from_numpy(o_seg)  # 供 torch interpolate 拼接（与 C# Resampler 同 half_pixel 公式）
+        seg_probs = o_seg
+        masks = o_mask  # (96,256,384) uint8
 
         margin = 2
-        for i in range(images.shape[0]):
-            mk = masks[i]
+        for i in range(1):
+            mk = masks[i].astype(np.int64)  # (1,96,256,384) -> 剥 batch 维，必须与 V1 的 masks[i] 一致
             boundary_organs = set()
-            for d in range(mk.dim()):
-                start = [slice(None)] * mk.dim()
-                end = [slice(None)] * mk.dim()
-                start[d] = slice(None, margin)
-                end[d] = slice(-margin, None)
-                for seg_ in (mk[tuple(start)], mk[tuple(end)]):
-                    boundary_organs.update(int(v) for v in torch.unique(seg_[seg_ > 0]))
+            for ax in range(3):
+                sl0 = [slice(None)] * 3
+                sl1 = [slice(None)] * 3
+                sl0[ax] = slice(None, margin)
+                sl1[ax] = slice(-margin, None)
+                for seg_ in (mk[tuple(sl0)], mk[tuple(sl1)]):
+                    boundary_organs.update(int(v) for v in np.unique(seg_[seg_ > 0]))
             if skip_organ is not None:
                 boundary_organs.discard(skip_organ + 1)
 
-            organ_ids, organ_counts = torch.unique(mk, return_counts=True)
-            organ_ids = organ_ids.long()
-            keep = organ_ids != 0
-            organ_counts = organ_counts[keep]
-            organ_ids = organ_ids[keep]
-            intact = [int(oid) for oid, c in zip(organ_ids.tolist(), organ_counts.tolist()) if oid not in boundary_organs]
+            uniq, cnts = np.unique(mk, return_counts=True)
+            intact = [int(u) for u, c in zip(uniq, cnts) if u != 0 and int(u) not in boundary_organs]
 
-            for oid in intact:
-                organ_name = ORGANS[oid - 1]
+            for label in intact:
+                oid = label - 1
+                organ_name = ORGANS[oid]
                 if organ_name not in test_organs:
                     continue
                 if organ_name in organ_feat_dict:
                     continue
-                query = qt[oid - 1].view(1, 1, -1)
-                key = torch.cat([
-                    embeds1[i][flags1[i][oid - 1]].view(1, -1, 256),
-                    embeds2[i][flags2[i][oid - 1]].view(1, -1, 256),
-                    embeds3[i][flags3[i][oid - 1]].view(1, -1, 256),
-                ], dim=1)
-                updated = mha(query, key)
-                feat = F.normalize(F.linear(updated, pw[oid - 1], pb[oid - 1]), dim=-1)
-                organ_feat_dict[organ_name] = feat.cpu().numpy().astype(np.float32)
+                f1 = o_f1[0, oid] > 0  # flags (1,36,N) -> 第 0 维是 batch，(1152,) bool
+                f2 = o_f2[0, oid] > 0
+                f3 = o_f3[0, oid] > 0
+                key = np.concatenate([o_x1[0][f1], o_x2[0][f2], o_x3[0][f3]], axis=0)  # (K,256)
+                feat = organ_head_forward(oid, key)  # (256,) L2 归一化
+                organ_feat_dict[organ_name] = feat
                 for item in organ_logits.keys():
                     if item.split("_")[0] != organ_name:
                         continue
-                    text_feat = text_feat_dict[item].to(device)
-                    logits = feat @ text_feat.t() / temp
-                    organ_logits[item].append(logits.softmax(-1).cpu().numpy().astype(np.float32))
-        return organ_logits, seg_probs
+                    tf = text_feat_dict[item].numpy()  # (2,256)
+                    neg = float(np.dot(feat, tf[0]))
+                    pos = float(np.dot(feat, tf[1]))
+                    l0, l1 = neg / temp, pos / temp
+                    m = max(l0, l1)
+                    e0, e1 = np.exp(l0 - m), np.exp(l1 - m)
+                    organ_logits[item].append(np.array([[e0 / (e0 + e1), e1 / (e0 + e1)]], dtype=np.float32))
+        return organ_logits, seg_prob_t
 
     # ---- 滑窗主循环 ----
     for w in range(num_win):
         win = image[:, :, slices[w][0], slices[w][1], slices[w][2]]
         dump_tag = f"win_{w:04d}" if (w < DUMP_FULL_WINDOWS or w == num_win - 1) else None
         organ_logits, seg_prob = forward_test_win(win, organ_logits, win_tag=dump_tag)
-        interp = F.interpolate(seg_prob, size=win.shape[2:], mode="trilinear")
+        # 逐通道 numpy 三线性重采样（与 C# Resampler 同 half_pixel 公式），
+        # 攒满 (C, D, H, W) 后一次性转 torch —— 不能用 empty_like(win)（仅 1 通道）
+        n_cls = seg_prob.shape[1]
+        interp_np = np.empty((n_cls,) + tuple(win.shape[2:]), dtype=np.float32)
+        for c in range(n_cls):
+            ch = seg_prob[0, c].reshape(1, 1, *seg_prob.shape[2:]).numpy()  # (1,1,96,128,192)
+            up = trilinear_resize(ch, win.shape[2:])
+            interp_np[c] = up[0, 0]
+        interp = torch.from_numpy(interp_np)[None].to(device)  # (1, C, D, H, W)，与 full_mask 同设备
         full_mask[:, :, slices[w][0], slices[w][1], slices[w][2]] += interp
         count_map[:, :, slices[w][0], slices[w][1], slices[w][2]] += 1
         seg_probs_all[str(w)] = interp.cpu().numpy().astype(np.float16)

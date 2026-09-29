@@ -1,4 +1,5 @@
 using Radar.Core.Inference;
+using Radar.Core.Support;
 using Radar.Tests.Support;
 using Xunit.Abstractions;
 
