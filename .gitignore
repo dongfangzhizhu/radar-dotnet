@@ -32,3 +32,9 @@ __pycache__/
 *.log
 *.tmp
 .DS_Store
+
+# 黄金基线大文件（npy/npz/json 由 export/golden_dump.py 重建，不入库）
+testdata/golden/*.npy
+testdata/golden/*.npz
+testdata/golden/*.json
+testdata/golden/windows/
