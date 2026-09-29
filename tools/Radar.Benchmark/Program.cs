@@ -132,8 +132,13 @@ internal static class Program
             }
         }
 
+#if DEBUG
+        const string buildCfg = "Debug";
+#else
+        const string buildCfg = "Release";
+#endif
         string md = "# RADAR .NET 性能基准（M5）\n\n" +
-                    $"生成时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss} · 机内实测（Debug 构建，绝对值为同环境相对比较用）\n\n" +
+                    $"生成时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss} · 机内实测（{buildCfg} 构建，绝对值为同环境相对比较用）\n\n" +
                     string.Join("\n", rows) + "\n";
         File.WriteAllText(benchPath, md);
         Console.WriteLine(md);

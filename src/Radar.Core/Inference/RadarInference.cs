@@ -24,7 +24,8 @@ public sealed class RadarInferenceEngine : IDisposable
         _testItems = testItems;
     }
 
-    public sealed record Result(IReadOnlyDictionary<string, double> Probabilities, int WindowCount);
+    public sealed record Result(IReadOnlyDictionary<string, double> Probabilities, int WindowCount,
+        IReadOnlyDictionary<string, double>? PhaseMs = null);
 
     /// <summary>test_items 按 organ 名分组索引（item 名格式「器官_病灶」）。</summary>
     private readonly Dictionary<string, List<int>> _itemsByOrgan = new();
@@ -41,6 +42,8 @@ public sealed class RadarInferenceEngine : IDisposable
 
         var testOrganSet = testOrgans.ToHashSet();
         int windowCount = 0;
+        var phaseMs = new Dictionary<string, double>();   // 阶段计时（M5 基准用）
+        var sw = System.Diagnostics.Stopwatch.StartNew();
 
         // ---- 主滑窗（同时累加 seg_probs，供 argmax 拼接 → 补推用）----
         int di = Math.Max((int)(96 * 0.75), 1), hi = Math.Max((int)(256 * 0.75), 1), wi = Math.Max((int)(384 * 0.75), 1);
@@ -53,12 +56,15 @@ public sealed class RadarInferenceEngine : IDisposable
             var window = ExtractWindow(volume, d, h, w, win);
             ForwardWindow(window, win.D1 - win.D0, win.H1 - win.H0, win.W1 - win.W0,
                 organFeats, organProbs, testOrganSet, skipOrgan: null,
-                fullMask, countMap, d, h, w, (win.D0, win.H0, win.W0));
+                fullMask, countMap, d, h, w, (win.D0, win.H0, win.W0), phaseMs);
             windowCount++;
         }
 
         // argmax 拼接 → stitched mask（补推的 bbox 搜索基于它）
+        long vox = (long)d * h * w;
+        phaseMs["interp_accum_ms"] = sw.ElapsedMilliseconds; // 主滑窗（含 interp 累加）累计到此
         var stitched = ArgmaxStitched(fullMask, countMap, d, h, w);
+        phaseMs["argmax_ms"] = sw.ElapsedMilliseconds - phaseMs["interp_accum_ms"];
 
         // ---- 缺失条目补推（center_crop + DivisiblePad k=32）----
         foreach (var (item, itemIdx) in _testItems.Select((it, i) => (it, i)))
@@ -75,14 +81,39 @@ public sealed class RadarInferenceEngine : IDisposable
             if (wd == 0)
                 continue; // 该器官在全图 mask 中无体素（与 Python 端 mask 边界翻转差异所致），无概率
             (window, wd, wh, ww) = DivisiblePad(window, wd, wh, ww, 32);
-            if (wd != 96 || wh != 256 || ww != 384)
-                throw new NotSupportedException(
-                    $"补推窗尺寸 ({wd},{wh},{ww}) 非固定 ONNX 输入 (96,256,384)——" +
-                    "需要重导动态 shape 模型（见 PLAN.md 风险 R4）");
 
-            ForwardWindow(window, wd, wh, ww, organFeats, organProbs, testOrganSet, skipOrgan: organId);
-            windowCount++;
+            if (wd == 96 && wh == 256 && ww == 384)
+            {
+                // 常规路径：crop 恰为固定 ONNX 输入（Python 原版行为：单窗整推）
+                ForwardWindow(window, wd, wh, ww, organFeats, organProbs, testOrganSet,
+                    skipOrgan: organId, phaseMs: phaseMs);
+                windowCount++;
+            }
+            else
+            {
+                // R4 路径：bbox 超出 ROI（如器官 z 向跨 96+ 层），crop+pad 后 > 固定输入。
+                // 对该区域做二次滑窗（子窗恒为 (96,256,384)），skip_organ 保证目标器官
+                // 在每个子窗都不算边界，organFeats 缓存保证其特征只在首个非边界子窗计算一次。
+                // 数值说明：与 Python 原版"单窗整推"有差（多窗各自视角），但主链路 146 项
+                // 硬门禁（demo case 不触发此路径）不受影响。
+                int di2 = Math.Max((int)(96 * 0.75), 1), hi2 = Math.Max((int)(256 * 0.75), 1),
+                    wi2 = Math.Max((int)(384 * 0.75), 1);
+                var subWindows = SlidingWindowInference.DensePatchSlices(
+                    (wd, wh, ww), (96, 256, 384), (di2, hi2, wi2));
+                if (subWindows.Count == 0)
+                    throw new InvalidOperationException(
+                        $"补推区域 ({wd},{wh},{ww}) 未能切出任何 (96,256,384) 子窗");
+                foreach (var sub in subWindows)
+                {
+                    var subWin = ExtractWindow(window, wd, wh, ww, sub);
+                    ForwardWindow(subWin, sub.D1 - sub.D0, sub.H1 - sub.H0, sub.W1 - sub.W0,
+                        organFeats, organProbs, testOrganSet, skipOrgan: organId,
+                        phaseMs: phaseMs);
+                    windowCount++;
+                }
+            }
         }
+        phaseMs["crop_pass_ms"] = sw.ElapsedMilliseconds - phaseMs["interp_accum_ms"] - phaseMs["argmax_ms"];
 
         // ---- 聚合：多窗概率平均，取阳性（index 1）----
         var result = new Dictionary<string, double>();
@@ -94,7 +125,8 @@ public sealed class RadarInferenceEngine : IDisposable
             foreach (var p in list) pos += p[1];
             result[_testItems[i]] = pos / list.Count;
         }
-        return new Result(result, windowCount);
+        phaseMs["total_ms"] = sw.ElapsedMilliseconds;
+        return new Result(result, windowCount, phaseMs);
     }
 
     /// <summary>单窗前向 + intact 器官打分（复刻 forward_test_win）。</summary>
@@ -104,9 +136,13 @@ public sealed class RadarInferenceEngine : IDisposable
         HashSet<string> testOrganSet,
         int? skipOrgan,
         float[]? fullMask = null, float[]? countMap = null, int D = 0, int H = 0, int W = 0,
-        (int D0, int H0, int W0)? origin = null)
+        (int D0, int H0, int W0)? origin = null,
+        Dictionary<string, double>? phaseMs = null)
     {
+        var swPhase = System.Diagnostics.Stopwatch.StartNew();
         var outs = _engine.Run(window);
+        if (phaseMs != null)
+            phaseMs["ort_ms"] = phaseMs.GetValueOrDefault("ort_ms") + swPhase.ElapsedMilliseconds;
 
         // seg_probs (37,96,128,192) → 上采样到窗尺寸 → 累加（与 evaluate 一致）
         if (fullMask != null && countMap != null && origin.HasValue)
@@ -160,7 +196,10 @@ public sealed class RadarInferenceEngine : IDisposable
             var flags2 = outs.Flags2.AsSpan(organId * 9216, 9216);
             var flags3 = outs.Flags3.AsSpan(organId * 73728, 73728);
 
+            swPhase.Restart();
             var (feat, scores) = _head.Score(organId, outs.ResX1, outs.ResX2, outs.ResX3, flags1, flags2, flags3);
+            if (phaseMs != null)
+                phaseMs["head_ms"] = phaseMs.GetValueOrDefault("head_ms") + swPhase.ElapsedMilliseconds;
             organFeats[organName] = feat; // 缓存特征向量（与原版 organ_feat_dict 对齐）
 
             if (_itemsByOrgan.TryGetValue(organName, out var items))
