@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RADAR 推理测试台</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2129; --border: #2d3742; --text: #d8dee6;
+    --muted: #8b98a5; --accent: #4aa3ff; --ok: #3fb96f; --err: #e5534b; --warn: #d9a53f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.6 "Microsoft YaHei", system-ui, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+  .panel h2 { font-size: 14px; margin: 0 0 12px; color: var(--accent); font-weight: 600; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  select, input[type=file] { background: #12181f; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; min-width: 180px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+           padding: 8px 18px; cursor: pointer; font-size: 14px; }
+  button:disabled { background: #3a4653; cursor: not-allowed; }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  .tag { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: 12px; }
+  .tag.Queued { background: #2a3542; color: var(--muted); }
+  .tag.Running { background: #274057; color: var(--accent); }
+  .tag.Completed { background: #1d3a2a; color: var(--ok); }
+  .tag.Failed { background: #44201e; color: var(--err); }
+  .bar { height: 5px; background: #12181f; border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .muted { color: var(--muted); }
+  .prob-cell { font-variant-numeric: tabular-nums; }
+  .hi { color: var(--warn); }
+  .detail { margin-top: 10px; max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .detail::-webkit-scrollbar { width: 8px; }
+  .detail::-webkit-scrollbar-thumb { background: #2d3742; border-radius: 4px; }
+  .err { color: var(--err); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+  .kpi { display: flex; gap: 24px; margin-bottom: 10px; font-size: 13px; }
+  .kpi b { font-size: 18px; display: block; }
+  a.csv { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RADAR 全身 CT 多器官病灶概率 — 推理测试台</h1>
+  <div class="sub">Radar.Backend · ONNX Runtime (CPU / DirectML / CUDA) · 146 项打分 · 与 Python 黄金基线 max_diff 6e-7</div>
+
+  <div class="panel">
+    <h2>① 新建任务</h2>
+    <div class="row">
+      <div class="field">
+        <label>计算设备</label>
+        <select id="device"><option value="cpu">cpu</option></select>
+      </div>
+      <div class="field">
+        <label>选择样例</label>
+        <select id="sample"><option value="">加载中…</option></select>
+      </div>
+      <button id="btnSample" onclick="runSample()">用样例运行</button>
+      <div class="field">
+        <label>或上传 NIfTI（.nii / .nii.gz）</label>
+        <input type="file" id="file" accept=".nii,.gz">
+      </div>
+      <button id="btnUpload" onclick="runUpload()">上传并运行</button>
+    </div>
+    <div class="bar"><i id="barFill"></i></div>
+    <div id="submitErr" class="err"></div>
+  </div>
+
+  <div class="panel">
+    <h2>② 任务队列（2 秒自动刷新）</h2>
+    <table>
+      <thead><tr><th>任务 ID</th><th>文件</th><th>设备</th><th>状态</th><th>耗时</th><th>窗数</th><th></th></tr></thead>
+      <tbody id="jobRows"><tr><td colspan="7" class="muted">暂无任务</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="resultPanel" style="display:none">
+    <h2>③ 结果 — <span id="resJob" class="muted"></span></h2>
+    <div class="kpi">
+      <div><b id="kpiCount">0</b>打分条目</div>
+      <div><b id="kpiPos">0</b>阳性 (p≥0.5)</div>
+      <div><b id="kpiTime">-</b>推理耗时</div>
+      <div><a class="csv" id="csvLink" href="#" download>⬇ 下载 CSV</a></div>
+    </div>
+    <div class="detail">
+      <table>
+        <thead><tr><th>条目（器官_病灶）</th><th>阳性概率</th><th>判定</th></tr></thead>
+        <tbody id="probRows"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let pollTimer = null, jobsCache = [], selectedJob = null;
+
+async function init() {
+  const devs = await (await fetch('/api/devices')).json();
+  $('device').innerHTML = devs.map(d =>
+    `<option value="${d.name}" ${d.available ? '' : 'disabled'}>${d.name}${d.available ? '' : '（不可用）'}</option>`).join('');
+  const samples = await (await fetch('/api/samples')).json();
+  $('sample').innerHTML = samples.length
+    ? samples.map(s => `<option value="${s.name}">${s.name}</option>`).join('')
+    : '<option value="">（无样例）</option>';
+  pollTimer = setInterval(pollJobs, 2000);
+  pollJobs();
+}
+
+async function runSample() {
+  $('submitErr').textContent = '';
+  const r = await fetch('/api/jobs/sample', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ sample: $('sample').value, device: $('device').value })
+  });
+  if (!r.ok) $('submitErr').textContent = (await r.json()).error || '提交失败';
+  else pollJobs();
+}
+
+async function runUpload() {
+  $('submitErr').textContent = '';
+  const f = $('file').files[0];
+  if (!f) { $('submitErr').textContent = '请先选择文件'; return; }
+  const fd = new FormData();
+  fd.append('file', f);
+  const r = await fetch(`/api/jobs/upload?device=${$('device').value}`, { method: 'POST', body: fd });
+  if (!r.ok) $('submitErr').textContent = (await r.json()).error || '上传失败';
+  else { $('file').value = ''; pollJobs(); }
+}
+
+async function pollJobs() {
+  jobsCache = await (await fetch('/api/jobs')).json();
+  const tb = $('jobRows');
+  if (!jobsCache.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">暂无任务</td></tr>'; return; }
+  const running = jobsCache.filter(j => j.Status === 'Running' || j.Status === 'Queued').length;
+  $('barFill').style.width = running ? '60%' : '0';
+  tb.innerHTML = jobsCache.map(j => `
+    <tr>
+      <td class="muted">${j.Id}</td>
+      <td>${j.FileName}</td>
+      <td>${j.Device}</td>
+      <td><span class="tag ${j.Status}">${jobCn(j.Status)}</span></td>
+      <td class="prob-cell">${j.ElapsedMs ? (j.ElapsedMs / 1000).toFixed(1) + ' s' : '-'}</td>
+      <td>${j.WindowCount || '-'}</td>
+      <td>${j.Status === 'Completed' ? `<a href="#" onclick="showResult('${j.Id}');return false" class="csv">查看</a>` : ''}</td>
+    </tr>`).join('');
+  if (selectedJob) {
+    const j = jobsCache.find(x => x.Id === selectedJob);
+    if (j && j.Status === 'Completed') renderResult(j);
+  }
+}
+
+function jobCn(s) { return { Queued: '排队中', Running: '推理中', Completed: '完成', Failed: '失败' }[s] || s; }
+
+function showResult(id) {
+  selectedJob = id;
+  const j = jobsCache.find(x => x.Id === id);
+  if (j) renderResult(j);
+}
+
+function renderResult(j) {
+  $('resultPanel').style.display = '';
+  $('resJob').textContent = `${j.Id}（${j.FileName} · ${j.Device}）`;
+  $('csvLink').href = `/api/jobs/${j.Id}/csv`;
+  $('kpiTime').textContent = (j.ElapsedMs / 1000).toFixed(1) + ' s';
+  const probs = Object.entries(j.Probabilities).sort((a, b) => b[1] - a[1]);
+  $('kpiCount').textContent = probs.length;
+  $('kpiPos').textContent = probs.filter(p => p[1] >= 0.5).length;
+  $('probRows').innerHTML = probs.map(([k, v]) => `
+    <tr>
+      <td>${k}</td>
+      <td class="prob-cell ${v >= 0.5 ? 'hi' : ''}">${v.toFixed(6)}</td>
+      <td class="${v >= 0.5 ? 'hi' : 'muted'}">${v >= 0.5 ? '阳性' : '阴性'}</td>
+    </tr>`).join('');
+}
+
+init();
+</script>
+</body>
+</html>
