@@ -2,13 +2,15 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Radar.Core.Inference;
 using Radar.Core.Nifti;
+using Radar.Core.Postprocessing;
 using Radar.Core.Preprocessing;
 using Radar.Core.Support;
+using Radar.Core.Visualization;
 
 namespace Radar.Backend;
 
-/// <summary>任务状态机：Queued → Running → Completed / Failed。</summary>
-public enum JobStatus { Queued, Running, Completed, Failed }
+/// <summary>任务状态机：Queued → Running → Completed / Failed / Skipped。</summary>
+public enum JobStatus { Queued, Running, Completed, Failed, Skipped }
 
 /// <summary>单条推理任务的记录（线程安全读：字段只在完成时一次性写入）。</summary>
 public class JobRecord
@@ -28,6 +30,8 @@ public class JobRecord
     public int WindowCount { get; set; }
     public Dictionary<string, double>? Probabilities { get; set; }
     public string? Error { get; set; }
+    /// <summary>分割掩码透叠图路径（仅 radar 路径产出；radar_plus 无掩码，恒为 null）。</summary>
+    public string? MaskPath { get; set; }
     /// <summary>内部：上传/样例 NIfTI 的磁盘路径。</summary>
     internal string? FilePath { get; set; }
 }
@@ -42,6 +46,7 @@ public sealed class InferenceJobRunner : BackgroundService
     private readonly ConcurrentDictionary<string, JobRecord> _jobs = new();
     private readonly string _modelsDir;
     private readonly string _uploadsDir;
+    private readonly string _masksDir;
     private readonly ILogger<InferenceJobRunner> _logger;
 
     // 设备探活结果缓存（true/false；null=未探测）
@@ -51,6 +56,7 @@ public sealed class InferenceJobRunner : BackgroundService
     {
         _modelsDir = Path.Combine(repoRoot, "models");
         _uploadsDir = Path.Combine(repoRoot, "uploads");
+        _masksDir = Path.Combine(repoRoot, "results", "masks");
         Directory.CreateDirectory(_uploadsDir);
         _logger = logger;
     }
@@ -148,6 +154,17 @@ public sealed class InferenceJobRunner : BackgroundService
         return job;
     }
 
+    /// <summary>批量入队（目录级批处理调用）：按给定顺序排队，单 worker 依次执行。</summary>
+    public async Task<List<JobRecord>> EnqueueBatchAsync(
+        IEnumerable<(string FilePath, string FileName)> cases,
+        string device, string model = "radar", string variant = "merlin_ft")
+    {
+        var list = new List<JobRecord>();
+        foreach (var (path, name) in cases)
+            list.Add(await EnqueueAsync(path, name, device, model, variant));
+        return list;
+    }
+
     // ---- worker ----
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -159,12 +176,27 @@ public sealed class InferenceJobRunner : BackgroundService
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var (probs, windows) = job.Model == "radar_plus"
-                    ? RunPlusInference(job.FilePath!, job.Device, job.Variant)
-                    : RunInference(job.FilePath!, job.Device);
-                job.Probabilities = probs;
-                job.WindowCount = windows;
+                if (job.Model == "radar_plus")
+                {
+                    var (probs, windows) = RunPlusInference(job.FilePath!, job.Device, job.Variant);
+                    job.Probabilities = probs;
+                    job.WindowCount = windows;
+                }
+                else
+                {
+                    var (probs, windows, maskPath) = RunInference(job.FilePath!, job.Device, job.Id);
+                    job.Probabilities = probs;
+                    job.WindowCount = windows;
+                    job.MaskPath = maskPath;
+                }
                 job.Status = JobStatus.Completed;
+            }
+            catch (CaseSkippedException ex)
+            {
+                // 超大病例按上游约定跳过（不是失败，批处理应继续）
+                _logger.LogWarning("任务 {Id} 跳过: {Msg}", job.Id, ex.Message);
+                job.Status = JobStatus.Skipped;
+                job.Error = ex.Message;
             }
             catch (Exception ex)
             {
@@ -189,7 +221,8 @@ public sealed class InferenceJobRunner : BackgroundService
         base.Dispose();
     }
 
-    private (Dictionary<string, double> Probabilities, int Windows) RunInference(string inputPath, string device)
+    private (Dictionary<string, double> Probabilities, int Windows, string? MaskPath) RunInference(
+        string inputPath, string device, string jobId)
     {
         // 1) 读取（NIfTI / DICOM 单文件多帧 / DICOM zip 序列）+ 预处理（与 M2 同管线）
         var img = inputPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
@@ -204,7 +237,28 @@ public sealed class InferenceJobRunner : BackgroundService
         using var radar = new RadarInferenceEngine(engine, Head,
             RadarLabels.Organs, TestItems.ToList());
         var result = radar.Run(prep.Data, prep.D, prep.H, prep.W, TestOrgans);
-        return (result.Probabilities.ToDictionary(p => p.Key, p => p.Value), result.WindowCount);
+
+        // 3) 分割掩码透叠图：完成即落盘（避免 (D,H,W) 掩码常驻内存）
+        string? maskPath = null;
+        if (result.StitchedMask is not null)
+        {
+            try
+            {
+                Directory.CreateDirectory(_masksDir);
+                var png = MaskOverlayPng.Render(
+                    prep.Data, result.D, result.H, result.W, result.StitchedMask);
+                maskPath = Path.Combine(_masksDir, $"{jobId}.png");
+                File.WriteAllBytes(maskPath, png);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("任务 {Id} 掩码渲染失败（不影响结果）: {Msg}", jobId, ex.Message);
+                maskPath = null;
+            }
+        }
+
+        return (result.Probabilities.ToDictionary(p => p.Key, p => p.Value),
+            result.WindowCount, maskPath);
     }
 
     /// <summary>radar_plus 任务：merlin 预处理变体 + 单窗整推 + whole head 打分。</summary>

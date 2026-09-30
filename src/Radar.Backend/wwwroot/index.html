@@ -35,6 +35,7 @@
   .tag.Running { background: #274057; color: var(--accent); }
   .tag.Completed { background: #1d3a2a; color: var(--ok); }
   .tag.Failed { background: #44201e; color: var(--err); }
+  .tag.Skipped { background: #3d3524; color: var(--warn); }
   .bar { height: 5px; background: #12181f; border-radius: 3px; overflow: hidden; margin-top: 8px; }
   .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
   .muted { color: var(--muted); }
@@ -47,6 +48,10 @@
   .kpi { display: flex; gap: 24px; margin-bottom: 10px; font-size: 13px; }
   .kpi b { font-size: 18px; display: block; }
   a.csv { color: var(--accent); text-decoration: none; }
+  a.csv + a.csv { margin-left: 10px; }
+  .maskimg { max-width: 100%; border: 1px solid var(--border); border-radius: 8px;
+             margin-top: 12px; image-rendering: pixelated; background: #000; }
+  select[multiple] { min-height: 92px; }
 </style>
 </head>
 <body>
@@ -76,10 +81,10 @@
         <select id="device"><option value="cpu">cpu</option></select>
       </div>
       <div class="field">
-        <label>选择样例</label>
-        <select id="sample"><option value="">加载中…</option></select>
+        <label>选择样例（可多选 = 批量）</label>
+        <select id="sample" multiple size="4"><option value="">加载中…</option></select>
       </div>
-      <button id="btnSample" onclick="runSample()">用样例运行</button>
+      <button id="btnSample" onclick="runSample()">运行选中样例</button>
       <div class="field">
         <label>或上传影像（.nii / .nii.gz / .dcm 多帧 / .zip DICOM 序列）</label>
         <input type="file" id="file" accept=".nii,.gz,.dcm,.zip">
@@ -93,7 +98,7 @@
   <div class="panel">
     <h2>② 任务队列（2 秒自动刷新）</h2>
     <table>
-      <thead><tr><th>任务 ID</th><th>文件</th><th>模型</th><th>设备</th><th>状态</th><th>耗时</th><th>窗数</th><th></th></tr></thead>
+      <thead><tr><th>任务 ID</th><th>文件</th><th>模型</th><th>设备</th><th>状态</th><th>耗时</th><th>窗数</th><th>结果 / 下载</th></tr></thead>
       <tbody id="jobRows"><tr><td colspan="8" class="muted">暂无任务</td></tr></tbody>
     </table>
   </div>
@@ -104,8 +109,14 @@
       <div><b id="kpiCount">0</b>打分条目</div>
       <div><b id="kpiPos">0</b>阳性 (p≥0.5)</div>
       <div><b id="kpiTime">-</b>推理耗时</div>
-      <div><a class="csv" id="csvLink" href="#" download>⬇ 下载 CSV</a></div>
     </div>
+    <div style="margin-bottom:10px">
+      <a class="csv" id="csvLink" href="#" download>⬇ 官方格式 CSV</a>
+      <a class="csv" id="csvLongLink" href="#" download>⬇ 长表 CSV</a>
+      <a class="csv" id="jsonLink" href="#" download>⬇ JSON</a>
+      <a class="csv" id="maskLink" href="#" target="_blank" style="display:none">🖼 掩码图</a>
+    </div>
+    <img id="maskImg" class="maskimg" style="display:none" alt="分割掩码透叠图（三正交 MIP）">
     <div class="detail">
       <table>
         <thead><tr><th>条目（器官_病灶）</th><th>阳性概率</th><th>判定</th></tr></thead>
@@ -137,12 +148,23 @@ function onModelChange() {
 
 async function runSample() {
   $('submitErr').textContent = '';
-  const r = await fetch('/api/jobs/sample', {
+  const picked = [...$('sample').selectedOptions].map(o => o.value).filter(Boolean);
+  if (!picked.length) { $('submitErr').textContent = '请先选择样例（可按住 Ctrl/Shift 多选）'; return; }
+  const device = $('device').value, model = $('model').value, variant = $('variant').value;
+  if (picked.length === 1) {
+    const r = await fetch('/api/jobs/sample', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sample: picked[0], device, model, variant })
+    });
+    if (!r.ok) $('submitErr').textContent = (await r.json()).error || '提交失败';
+    else pollJobs();
+    return;
+  }
+  const r = await fetch('/api/jobs/batch', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ sample: $('sample').value, device: $('device').value,
-      model: $('model').value, variant: $('variant').value })
+    body: JSON.stringify({ samples: picked, device, model, variant })
   });
-  if (!r.ok) $('submitErr').textContent = (await r.json()).error || '提交失败';
+  if (!r.ok) $('submitErr').textContent = (await r.json()).error || '批量提交失败';
   else pollJobs();
 }
 
@@ -164,7 +186,18 @@ async function pollJobs() {
   if (!jobsCache.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">暂无任务</td></tr>'; return; }
   const running = jobsCache.filter(j => j.status === 'Running' || j.status === 'Queued').length;
   $('barFill').style.width = running ? '60%' : '0';
-  tb.innerHTML = jobsCache.map(j => `
+  tb.innerHTML = jobsCache.map(j => {
+    let links = '-';
+    if (j.status === 'Completed') {
+      links = `<a href="#" onclick="showResult('${j.id}');return false" class="csv">查看</a>`
+        + ` <a class="csv" href="/api/jobs/${j.id}/csv?format=official" download>官方CSV</a>`
+        + ` <a class="csv" href="/api/jobs/${j.id}/csv" download>长表</a>`
+        + ` <a class="csv" href="/api/jobs/${j.id}/json" download>JSON</a>`
+        + (j.hasMask ? ` <a class="csv" href="/api/jobs/${j.id}/mask.png" target="_blank">掩码</a>` : '');
+    } else if (j.status === 'Skipped') {
+      links = '<span class="muted">超限跳过</span>';
+    }
+    return `
     <tr>
       <td class="muted">${j.id}</td>
       <td>${j.fileName}</td>
@@ -173,15 +206,15 @@ async function pollJobs() {
       <td><span class="tag ${j.status}">${jobCn(j.status)}</span></td>
       <td class="prob-cell">${j.elapsedMs ? (j.elapsedMs / 1000).toFixed(1) + ' s' : '-'}</td>
       <td>${j.windowCount || '-'}</td>
-      <td>${j.status === 'Completed' ? `<a href="#" onclick="showResult('${j.id}');return false" class="csv">查看</a>` : ''}</td>
-    </tr>`).join('');
+      <td>${links}</td>
+    </tr>`; }).join('');
   if (selectedJob) {
     const j = jobsCache.find(x => x.id === selectedJob);
     if (j && j.status === 'Completed') renderResult(j);
   }
 }
 
-function jobCn(s) { return { Queued: '排队中', Running: '推理中', Completed: '完成', Failed: '失败' }[s] || s; }
+function jobCn(s) { return { Queued: '排队中', Running: '推理中', Completed: '完成', Failed: '失败', Skipped: '跳过' }[s] || s; }
 
 function showResult(id) {
   selectedJob = id;
@@ -192,7 +225,20 @@ function showResult(id) {
 function renderResult(j) {
   $('resultPanel').style.display = '';
   $('resJob').textContent = `${j.id}（${j.fileName} · ${j.device}）`;
-  $('csvLink').href = `/api/jobs/${j.id}/csv`;
+  $('csvLink').href = `/api/jobs/${j.id}/csv?format=official`;
+  $('csvLongLink').href = `/api/jobs/${j.id}/csv`;
+  $('jsonLink').href = `/api/jobs/${j.id}/json`;
+  if (j.hasMask) {
+    $('maskLink').style.display = '';
+    $('maskLink').href = `/api/jobs/${j.id}/mask.png`;
+    const img = $('maskImg');
+    img.style.display = '';
+    img.src = `/api/jobs/${j.id}/mask.png?_=${Date.now()}`;
+  } else {
+    $('maskLink').style.display = 'none';
+    $('maskImg').style.display = 'none';
+    $('maskImg').removeAttribute('src');
+  }
   $('kpiTime').textContent = j.elapsedMs ? (j.elapsedMs / 1000).toFixed(1) + ' s' : '-';
   const probs = Object.entries(j.probabilities || {}).sort((a, b) => b[1] - a[1]);
   $('kpiCount').textContent = probs.length;

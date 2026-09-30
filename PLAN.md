@@ -26,6 +26,12 @@
 - 不支持 DICOM 输入（首版仅 `.nii/.nii.gz`，DICOM 列为后续扩展）。
 - 不迁移 `radar_plus` 系列权重（首版只做 `checkpoint_radar_pretrain.pth`，管线设计上预留换权重能力）。
 
+> **范围变更（后续里程碑推翻的条目）**：
+> - 「不支持 DICOM 输入」→ **M6 已推翻**，现支持单文件/多帧/目录序列/zip，含 7 种压缩传输语法。
+> - 「不迁移 `radar_plus`」→ **M7 已推翻**，两个变体（pretrain / merlin_ft）均已迁移并对拍通过。
+> - 「AUC 评估属评估而非推理由此不做」→ **M9 已补做**（算子 + CLI `eval`），因差距审计要求与上游 `calc_metrics_merlin_testset.py` 能力对齐。
+> - 始终不做的只有：训练链路、BERT 文本编码器。
+
 ---
 
 ## 2. 迁移可行性依据（已取证）
@@ -218,6 +224,60 @@ EP 选择策略（`Radar.Core/Configuration`）：
 
 - **判定**：fp16 全模型转换**不满足现有对齐门禁**（res_x 超门禁 240 倍；pred_mask/flags 存在翻转，flags 翻转会改变 key 序列结构）。**结论：不启用 fp16 路径**；保持 fp32（CUDA fp32 稳态 24.7s 已兑现 2.4× CPU）。若将来确需 fp16，须做混合精度（Conv/BatchNorm 等敏感算子保 fp32，仅 GEMM 类降精）并重跑全链路复验，而非整体 `convert_float_to_float16`。
 
+### M9 — 实测差距 8 项收口（2026-09-30）✅
+
+**背景**：迁移审计（逐行通读上游 `inference_demo.py` 628 行 + `infer_merlin_whole.py`）发现推理主链路已完整迁移，但有 8 项「上游有 / 本项目无」或「PLAN 自承诺未落地」的差距，全部在本轮补齐。
+
+**关键澄清**：上游 `inference_demo.py` **本身不产出**分割掩码、可视化与 JSON，唯一输出是一张概率 CSV（L552-555）。因此差距表中 #2（掩码可视化）与 #6（JSON 导出）属 PLAN 自承诺或增补，#1/#3/#4/#5/#7 为真实功能差距。
+
+#### M9-1 官方宽表 CSV（差距 #1、#6）
+- **权威来源**：列名表由 `export/gen_item_labels.py` 从上游 `inference_demo.py` 用 `ast` 提取 `self.test_items`（顺序）+ `self.english_mapping`（列名），并与官方 CSV 表头逐列交叉校验（146 列列名与列序完全一致）。
+- **踩坑（实测发现的真 bug）**：`english_mapping` 中存在英文名自带半角括号的条目 —— `胃_间质瘤（gist） (Stomach_Gastrointestinal stromal tumor (GIST))`。原先按「从右往左找第一个 `" ("`」切分反查会切错（切出 `...stromal tumor`），导致宽表**往返不是逐字节一致**。改为在 `TestItemLabels` 里构建 `列名 -> 条目` 的**精确字典**反查（由 `English` 派生，生成器内加「列名唯一性」断言保证可一一反查），未知列才退化为最左侧 `" ("` 前缀。
+- **格式约定（实测确定）**：UTF-8 BOM + CRLF + 末尾 CRLF；147 列；数值为 Python `repr(float)` 最短往返（与 C# `"R"` 仅差指数大小写与整数补 `.0`）；NaN 写空字段。
+- **验收**：`testdata/golden/RADAR_infer_results_demo.csv` → `Read` → `Build` **逐字节一致（9993 = 9993 字节）**；11 组 `repr` 取值全覆盖；多行走查回位级可逆。
+- **落地**：`Radar.Core/Postprocessing/ResultCsv.cs`；API `/api/jobs/{id}/csv?format=official` 与 `/json`；CLI `--output`。
+
+#### M9-2 分割掩码可视化（差距 #2）
+- **引擎改造**：`RadarInferenceEngine.Result` 暴露 `StitchedMask`（滑窗概率累加 → argmax 拼接的 (D,H,W) 标签图）+ `D/H/W`；补推阶段不修改它。
+- **实现**：`PngEncoder`（真彩色 RGB8、ZLibStream 生成 IDAT、CRC32 表；无图像库依赖）+ `MaskOverlayPng`（沿三轴做 MIP，掩码 0.55 不透明度叠色，36 器官按 HSV 色环分配，三视图横向拼接 + 8px 黑色留白）。
+- **独立预言机（避免「自己测自己」）**：`export/gen_png_ref.py` 用 Python 标准库 `zlib` 按 PNG 规范手工拼一份参考 PNG（5×3，非 16 整数倍宽度），落盘 IHDR/IEND 的**完整块字节**与 IDAT **解压后的原始扫描线**；测试端逐字节比对（IHDR/IEND 与压缩实现无关，IDAT 比语义内容以绕过压缩级别差异）。
+- **验收**：编码器对 Python 参考**结构与语义全等**；与黄金 `stitched_mask.npy` **逐体素全等（0 / 12,496,896 不一致）**，前景体素 1,645,197 完全相同、标签上界同为 36。
+- **落地**：`Radar.Core/Visualization/`；API `/api/jobs/{id}/mask.png`；CLI `--save-mask`。
+
+#### M9-3 目录级批处理与独立 CLI（差距 #3、#4）
+- **新增 `tools/Radar.Cli`**（程序集名 `radar`，加入 `Radar.slnx`）：`infer` / `eval` / `help`；`Options.cs` 做 `--key value` 与 `--flag` 解析；`CliEnv.FindRepoRoot()` 上溯定位 `models/`（`tests` 里的 `RepoRoot` 不可跨程序集复用）。
+- **批处理语义**：递归扫描 `.nii/.nii.gz/.dcm/.zip` → 按路径排序（保证确定性）→ 按 `--workers` × 设备做索引分片 → `results[i]` 按序聚合 → **一次**写出宽表（不会多 worker 并发写同一文件）。
+- **实测**：4 worker × 4 个 merlin 病例，单个 ~100.5s，总计 105.0s（串行约 400s）；结果互不相同且行序 == 输入排序。
+
+#### M9-4 超大病例跳过守卫（差距 #5）
+- 上游在预处理后检查 `image.shape[1:]`，任一维 > 1000 就 `continue`（跳过而非失败）。
+- **实现**：`RadarInferenceEngine.MaxSpatialDim = 1000` + 可独立调用的静态谓词 `ExceedsSpatialLimit(d,h,w)`（批处理预筛用）+ `CaseSkippedException`（独立类型，便于与「推理失败」区分）。
+- **验收**：真实引擎上喂 `(1001,1,1)` 病例，**进入滑窗之前**抛出异常，实测 **3 ms** 返回；边界 `== 1000` 不抛。批处理汇总单列跳过数，Web 端新增 `Skipped` 状态与「超限跳过」文案。
+
+#### M9-5 AUC 评估（差距 #7）
+- `Radar.Core/Support/RocAuc.cs`：秩形式 Mann-Whitney U，平局取平均秩，单类（全正/全负）返回 NaN —— 与 `sklearn.metrics.roc_auc_score` 语义一致。
+- `Radar.Core/Support/MerlinDiseases.cs`：`map_radar_merlin` 21 项 key 逐字保留；胆囊缺失项用分割体素数（< 1000）判定而非概率。
+- **交叉验证**：测试端用**朴素两两配对**（O(n²)，平局计 0.5）作为独立算法，与秩形式在随机/平局/单类等场景下逐值一致（< 1e-12）。
+- **口径提醒**：`MerlinDiseases.Map` 中 `大肠_粘膜下水肿`、`心脏_主动脉瓣钙化`、`肝_肝大`、`肾_肾积水`、`胆囊_术后胆囊缺失` **不在** RAD-CT 的 146 项内 —— 上游 MERLIN 评估用另一套 finding 名表。`eval` 对缺失项显式报告。
+
+#### M9-6 差距 #8（多卡 `all_gather`）
+- **明确不做**：属训练/大集评估场景，需引入 NCCL。改以 CLI `--workers` 做**多进程级**并行（同机按设备分片），无分布式依赖。
+
+#### M9-7 前端与端点补齐
+- **新端点**：`/api/jobs/{id}/json`（`UnsafeRelaxedJsonEscaping` 保持中文可读）、`/api/jobs/{id}/mask.png`、`POST /api/jobs/batch`；`/csv?format=official`；`JobView` 增 `hasMask`。
+- **前端**：样例下拉改 `multiple`（多选即批量）、任务行末列改为「结果 / 下载」链接组（查看 / 官方CSV / 长表 / JSON / 掩码）、结果面板加 KPI 下载区与掩码图、`Skipped` 中文文案。
+- **前端回归方法（沿用本项目的实证手法）**：**不做静态检查** —— 编译器不校验裸 JS，模板字符串里字段名拼错只在运行时暴露（上一轮 `undefined` bug 即由此漏过）。改为：启动后端 → 探活 → 从 `GET /` 抓**实际被服务的那份 `<script>`** → 在 Node `vm` 里配 DOM shim + 真实 `/api/devices`、`/api/samples`、`/api/jobs` payload 执行 → 断言 38 项（无 `undefined`/`NaN`、状态文案、链接路径、掩码显隐切换、多选走 batch / 单选走 sample / 空选不请求、`init()` 确实填充了下拉）。
+  - 脚本：`export/verify_frontend.py`。**必须校验服务端返回的脚本**，否则静态资源没更新会「假绿」。
+
+#### M9-8 测试与文档
+- 新增 4 个测试类共 51 个用例（官方宽表 CSV 20 / ROC AUC 11 / PNG 与掩码 10 / 跳过守卫 10），并在既有端到端用例上追加**掩码逐体素对拍**（复用同一次推理，零额外耗时）。
+- 全量 **64/64 PASS（8m30s，0 跳过）**；`dotnet build -c Release` **0 warning / 0 error**。
+- README §8.2 由「未实现清单」改写为「已收口清单」，附落地位置与验收数据。
+
+> **已知遗留**：`eval` 子命令的端到端验证仅覆盖算子与格式（与朴素配对交叉验证），未在真实 MERLIN 测试集上跑出全量 AUC 数值 —— 缺少 MERLIN 标签 JSON（Stanford AIMI 需注册下载）。属数据可及性问题，非实现缺陷。
+
+---
+
 > 总工期估算：**11–15 个工作日**（单人）。M1 硬门槛已于 2026-09-29 通过（4 个 commit）。
 >
 > **M1 实测结论**：① 向量化改造与原版逐位一致（8 输出 diff=0）；② ONNX 导出 PASS（res_x < 1.5e-5、pred_mask 不匹配 3/9.4M、flags 全等）；③ 官方 CSV 软参考 PASS（146 项全匹配 mean 5.8e-5）；④ 本机 CUDA 可用（golden dump GPU 秒级）。
@@ -229,7 +289,8 @@ EP 选择策略（`Radar.Core/Configuration`）：
 | 数据 | 来源 | 用途 | 入库 |
 |---|---|---|---|
 | AC423ccbe.nii.gz | `../damo-radar/data/demo_cases/` | 主对齐样例（有官方参考 CSV） | 否（软引用） |
-| RADAR_infer_results_demo.csv | `../damo-radar/results/` | 对齐金标准（165 列） | **是**（14 KB，拷入 `testdata/golden/`） |
+| RADAR_infer_results_demo.csv | `../damo-radar/results/` | 对齐金标准（147 列 = `file_name` + 146 项） | **是**（14 KB，拷入 `testdata/golden/`） |
+| png_ref_5x3.{png,json} | `export/gen_png_ref.py` 自产 | PNG 编码器的独立预言机 | **是**（< 1 KB） |
 | merlin_data_train_demo | `../damo-radar/data/` | M5 冒烟扩展 | 否（软引用） |
 | golden 逐窗 dump | M1 自产 | 逐级对拍 | 否（gitignore） |
 | 更多样例 | MERLIN（Stanford AIMI，需注册下载） | 可选扩展 | 否 |
@@ -249,6 +310,9 @@ EP 选择策略（`Radar.Core/Configuration`）：
 | .NET 预处理 | vs 黄金基线逐元素 | < 1e-5 |
 | .NET 滑窗/器官头 | 逐窗张量 / 单器官概率 | < 1e-4 / < 1e-3 |
 | 端到端（**核心门禁**） | demo case 146 值 vs 本地 golden | 全部 < 1e-3 |
+| 分割掩码（**核心门禁**，M9 追加） | argmax 拼接标签图 vs 黄金 `stitched_mask.npy` | 逐体素全等 |
+| 官方 CSV 格式（M9 追加） | 本地 golden → 宽表 → 对比官方文件 | 逐字节全等 |
+| ROC AUC 算子（M9 追加） | vs 朴素两两配对（独立算法） | < 1e-12 |
 
 浮点注意事项：ORT 与 torch 的 Conv3d/interpolate 在不同 EP/线程数下存在 1e-6 级浮点差异，逐窗累加（数百窗 × 概率平均）会放大到 1e-4 级——阈值已按此留量。若个别列超差，优先排查重采样语义，其次 max_pool3d 的 ceil/floor 模式。
 
@@ -259,7 +323,7 @@ EP 选择策略（`Radar.Core/Configuration`）：
 | R1 | MONAI trilinear 重采样语义与手写实现对不齐 | 高 | 用 ONNX Resize 子图规避手写（§2.1）；对拍不过再回退查 align_corners |
 | R2 | 向量化 flags 改造与 torch.unique 语义不完全等价 | 中 | M1 首个任务即 Python 内对拍，改到过为止 |
 | R3 | DirectML 对 Conv3d/opset17 覆盖不全 | 中 | `auto` 探活回退 CPU；CUDA EP 兜底；M5 矩阵实测 |
-| R4 | 大体积 NIfTI（>512³）内存压力 | 中 | float32 单卷 + 流式重采样；跳过 >1000 维样例（与原版一致） |
+| R4 | 大体积 NIfTI（>512³）内存压力 | 中 | float32 单卷 + 流式重采样；跳过 >1000 维样例（与原版一致，**M9-4 已落地**为 `CaseSkippedException`） |
 | R5 | NIfTI 读取器兼容性（数据类型/压缩变体） | 中 | 首版支持 float32/int16 + gzip；用 demo + merlin demo 实测 |
 | R6 | fp16 精度损失 | 低 | 默认 fp32，fp16 仅在对齐通过后开 |
 

@@ -8,5 +8,6 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Radar.Benchmark/Radar.Benchmark.csproj" />
+    <Project Path="tools/Radar.Cli/Radar.Cli.csproj" />
   </Folder>
 </Solution>

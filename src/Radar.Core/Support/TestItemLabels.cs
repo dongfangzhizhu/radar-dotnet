@@ -1,0 +1,194 @@
+namespace Radar.Core.Support;
+
+/// <summary>
+/// 146 个打分条目的官方英文列名映射（对应上游 inference_demo.py 的 english_mapping）。
+/// 用于导出与官方对齐的宽表 CSV，列名格式 "{中文条目} ({英文})"。
+/// 列序即本表顺序，与 text_feats.json 的 items 及官方 CSV 列序一致。
+/// </summary>
+/// <remarks>
+/// 本文件由 export/gen_item_labels.py 从上游源码生成，请勿手工编辑。
+/// 重新生成：python export/gen_item_labels.py
+/// </remarks>
+public static class TestItemLabels
+{
+    /// <summary>中文条目 -> 官方英文列名（不含括号）。</summary>
+    public static readonly IReadOnlyDictionary<string, string> English =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["主动脉_主动脉夹层"] = "Aorta_Aortic dissection",
+        ["主动脉_主动脉瘤"] = "Aorta_Aortic aneurysm",
+        ["主动脉_粥样硬化"] = "Aorta_Atherosclerosis",
+        ["主动脉_钙化"] = "Aorta_Calcification",
+        ["十二指肠_占位"] = "Duodenum_Mass",
+        ["十二指肠_囊袋状突出影"] = "Duodenum_Saccular outpouching",
+        ["十二指肠_憩室"] = "Duodenum_Diverticulum",
+        ["十二指肠_梗阻"] = "Duodenum_Obstruction",
+        ["十二指肠_溃疡"] = "Duodenum_Ulcer",
+        ["大肠_克罗恩病"] = "Large bowel_Crohn's disease",
+        ["大肠_大肠（壁）钙化"] = "Large bowel_Mural calcification",
+        ["大肠_急慢性（结）肠炎"] = "Large bowel_Colitis",
+        ["大肠_浆膜面毛糙"] = "Large bowel_Serosal surface irregularity",
+        ["大肠_溃疡性结肠炎"] = "Large bowel_Ulcerative colitis",
+        ["大肠_直肠癌"] = "Large bowel_Rectal cancer",
+        ["大肠_积液积气"] = "Large bowel_Gas and fluid accumulation",
+        ["大肠_结肠癌"] = "Large bowel_Colon cancer",
+        ["大肠_肠壁毛糙"] = "Large bowel_Wall irregularity",
+        ["大肠_肠壁水肿"] = "Large bowel_Wall edema",
+        ["大肠_肠套叠"] = "Large bowel_Intussusception",
+        ["大肠_肠憩室"] = "Large bowel_Diverticulum",
+        ["大肠_肠梗阻"] = "Large bowel_Obstruction",
+        ["大肠_肠穿孔"] = "Large bowel_Perforation",
+        ["大肠_肠道扩张"] = "Large bowel_Dilatation",
+        ["大肠_脂肪间隙模糊"] = "Large bowel_Blurring of fat planes",
+        ["大肠_阑尾炎"] = "Large bowel_Appendicitis",
+        ["大肠_阑尾粪石"] = "Large bowel_Appendicolith",
+        ["小肠_克罗恩病"] = "Small bowel_Crohn's disease",
+        ["小肠_套叠"] = "Small bowel_Intussusception",
+        ["小肠_扭转"] = "Small bowel_Volvulus",
+        ["小肠_梗阻"] = "Small bowel_Obstruction",
+        ["小肠_淋巴瘤"] = "Small bowel_Lymphoma",
+        ["小肠_积气积液"] = "Small bowel_Gas and fluid accumulation",
+        ["小肠_系膜指膜炎"] = "Small bowel_Mesenteric panniculitis",
+        ["小肠_系膜淋巴结肿大"] = "Small bowel_Mesenteric lymphadenopathy",
+        ["小肠_肠壁增厚"] = "Small bowel_Wall thickening",
+        ["小肠_肠管扩张"] = "Small bowel_Dilatation",
+        ["小肠_脂肪瘤"] = "Small bowel_Lipoma",
+        ["小肠_间质瘤（胃肠间质瘤-gist）"] = "Small bowel_Gastrointestinal stromal tumor",
+        ["小肠_（急慢性）小肠炎"] = "Small bowel_Enteritis",
+        ["心脏_心包积液"] = "Heart_Pericardial effusion",
+        ["心脏_心影（脏）增大"] = "Heart_Cardiomegaly",
+        ["肋骨_转移瘤（乳腺癌 骨转移）"] = "Rib_Metastasis",
+        ["肋骨_骨折"] = "Rib_Fracture",
+        ["肋骨_骨质破坏"] = "Rib_Bone destruction",
+        ["肝_低密度影"] = "Liver_Hypoattenuating lesion",
+        ["肝_格林森鞘积液"] = "Liver_Periportal edema",
+        ["肝_比例失调"] = "Liver_Lobar volume disproportion",
+        ["肝_波浪状改变"] = "Liver_Undulating contour",
+        ["肝_硬化"] = "Liver_Cirrhosis",
+        ["肝_结节状强化"] = "Liver_Nodular enhancement",
+        ["肝_肝内胆管扩张"] = "Liver_Intrahepatic bile duct dilatation",
+        ["肝_肝内胆管结石"] = "Liver_Hepatolithiasis",
+        ["肝_肝内钙化灶"] = "Liver_Intrahepatic calcification",
+        ["肝_肝囊肿"] = "Liver_Cyst",
+        ["肝_肝细胞癌"] = "Liver_Hepatocellular carcinoma",
+        ["肝_肝胆管内高密度影"] = "Liver_Hyperattenuating lesion in intrahepatic bile ducts",
+        ["肝_肝血管瘤"] = "Liver_Hemangioma",
+        ["肝_胆管癌"] = "Liver_Intrahepatic cholangiocarcinoma",
+        ["肝_脂肪肝"] = "Liver_Steatotic liver disease",
+        ["肝_脓肿"] = "Liver_Abscess",
+        ["肝_转移瘤"] = "Liver_Metastasis",
+        ["肝_边缘不规则"] = "Liver_Irregular margin",
+        ["肺_斑片影"] = "Lung_Patchy opacity",
+        ["肺_气胸"] = "Lung_Pneumothorax",
+        ["肺_结节"] = "Lung_Nodule",
+        ["肺_肺占位"] = "Lung_Mass",
+        ["肺_肺萎陷"] = "Lung_Pulmonary collapse",
+        ["肺_胸腔积液"] = "Lung_Pleural effusion",
+        ["肺_膨胀不全"] = "Lung_Atelectasis",
+        ["肺_转移瘤"] = "Lung_Metastasis",
+        ["肺_钙化灶"] = "Lung_Calcification",
+        ["肺_高密度影"] = "Lung_Hyperattenuating opacity",
+        ["肾_低密度影"] = "Kidney_Hypoattenuating lesion",
+        ["肾_囊肿"] = "Kidney_Cyst",
+        ["肾_多囊肾"] = "Kidney_Polycystic kidney disease",
+        ["肾_实质变薄"] = "Kidney_Parenchymal thinning",
+        ["肾_无强化囊性灶"] = "Kidney_Nonenhancing cystic lesion",
+        ["肾_肾动脉瘤"] = "Kidney_Renal artery aneurysm",
+        ["肾_肾盂扩张"] = "Kidney_Renal pelvic dilatation",
+        ["肾_肾盂癌"] = "Kidney_Renal pelvic cancer",
+        ["肾_肾盂积水"] = "Kidney_Hydronephrosis",
+        ["肾_肾细胞癌（透明细胞癌）"] = "Kidney_Renal cell carcinoma",
+        ["肾_肾萎缩"] = "Kidney_Atrophy",
+        ["肾_肾血管平滑肌脂肪瘤"] = "Kidney_Angiomyolipoma",
+        ["肾_肾（盂）结石"] = "Kidney_Nephrolithiasis",
+        ["肾_高密度影"] = "Kidney_Hyperattenuating lesion",
+        ["肾上腺_增生"] = "Adrenal gland_Hyperplasia",
+        ["肾上腺_结节"] = "Adrenal gland_Nodule",
+        ["肾上腺_脂肪瘤"] = "Adrenal gland_Lipoma",
+        ["肾上腺_腺瘤"] = "Adrenal gland_Adenoma",
+        ["肾上腺_转移瘤"] = "Adrenal gland_Metastasis",
+        ["肾上腺_钙化"] = "Adrenal gland_Calcification",
+        ["胃_壁水肿"] = "Stomach_Wall edema",
+        ["胃_扩张"] = "Stomach_Dilatation",
+        ["胃_胃底静脉曲张"] = "Stomach_Gastric fundal varices",
+        ["胃_胃溃疡"] = "Stomach_Ulcer",
+        ["胃_胃癌"] = "Stomach_Gastric cancer",
+        ["胃_间质瘤（gist）"] = "Stomach_Gastrointestinal stromal tumor (GIST)",
+        ["胆囊_结石"] = "Gallbladder_Cholecystolithiasis",
+        ["胆囊_结节状致密影"] = "Gallbladder_Nodular stone-like hyperattenuating lesion",
+        ["胆囊_胆囊增大"] = "Gallbladder_Distention",
+        ["胆囊_胆囊炎"] = "Gallbladder_Cholecystitis",
+        ["胆囊_胆囊癌"] = "Gallbladder_Gallbladder cancer",
+        ["胆囊_胆囊腺肌症"] = "Gallbladder_Adenomyomatosis",
+        ["胆囊_胆管壁增厚"] = "Gallbladder_Extrahepatic bile duct wall thickening",
+        ["胆囊_胆管扩张"] = "Gallbladder_Extrahepatic bile duct dilatation",
+        ["胆囊_胆管炎"] = "Gallbladder_Cholangitis",
+        ["胆囊_胆管癌"] = "Gallbladder_Cholangiocarcinoma",
+        ["胆囊_胆管积气"] = "Gallbladder_Pneumobilia",
+        ["胆囊_胆管结石"] = "Gallbladder_Extrahepatic bile duct stone",
+        ["胆囊_高密度影"] = "Gallbladder_Hyperattenuating lesion",
+        ["胆囊_黄色肉芽肿"] = "Gallbladder_Xanthogranuloma",
+        ["胰腺_低密度影"] = "Pancreas_Low-density lesion",
+        ["胰腺_囊肿"] = "Pancreas_Cyst",
+        ["胰腺_围脂肪间隙模糊"] = "Pancreas_Blurring of peripancreatic fat planes",
+        ["胰腺_肿瘤或胰腺癌"] = "Pancreas_Pancreatic cancer",
+        ["胰腺_胰周假性囊肿"] = "Pancreas_Peripancreatic pseudocyst",
+        ["胰腺_胰管扩张"] = "Pancreas_Pancreatic duct dilatation",
+        ["胰腺_胰管结石"] = "Pancreas_Pancreatic duct calculus",
+        ["胰腺_胰腺炎"] = "Pancreas_Pancreatitis",
+        ["胰腺_胰腺饱满"] = "Pancreas_Enlargement",
+        ["胰腺_萎缩"] = "Pancreas_Atrophy",
+        ["脾_低密度灶"] = "Spleen_Hypoattenuating lesion",
+        ["脾_副脾"] = "Spleen_Accessory spleen",
+        ["脾_囊肿"] = "Spleen_Cyst",
+        ["脾_梗死"] = "Spleen_Infarction",
+        ["脾_片状低密度区"] = "Spleen_Patchy hypoattenuating lesion",
+        ["脾_脾大"] = "Spleen_Splenomegaly",
+        ["脾_脾脏淋巴瘤"] = "Spleen_Lymphoma",
+        ["脾_钙化"] = "Spleen_Calcification",
+        ["膀胱_憩室"] = "Bladder_Diverticulum",
+        ["膀胱_结石"] = "Bladder_Stone",
+        ["膀胱_膀胱壁毛糙"] = "Bladder_Wall irregularity",
+        ["膀胱_膀胱炎"] = "Bladder_Cystitis",
+        ["膀胱_膀胱癌"] = "Bladder_Bladder cancer",
+        ["膀胱_软组织密度影"] = "Bladder_Soft-tissue attenuation lesion",
+        ["门静脉_增宽"] = "Portal vein_Dilatation",
+        ["门静脉_栓塞"] = "Portal vein_Thrombosis",
+        ["门静脉_高压"] = "Portal vein_Hypertension",
+        ["食管_增粗迂曲血管影"] = "Esophagus_Dilated and tortuous tubular opacities",
+        ["食管_管壁增厚"] = "Esophagus_Wall thickening",
+        ["食管_裂孔疝"] = "Esophagus_Hiatal hernia",
+        ["食管_静脉扩张迂曲"] = "Esophagus_Dilated and tortuous veins",
+        ["食管_静脉曲张"] = "Esophagus_Varices",
+        ["骶骨_骨炎"] = "Sacrum_Osteitis",
+    };
+
+    /// <summary>
+    /// 官方列名 -> 中文条目（精确反查）。
+    /// 由 <see cref="English"/> 构造：不能靠切分括号反查 —— 英文名本身可能含半角括号，
+    /// 例如 "胃_间质瘤（gist） (Stomach_Gastrointestinal stromal tumor (GIST))"。
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> ColumnToItem =
+        English.ToDictionary(kv => $"{kv.Key} ({kv.Value})", kv => kv.Key, StringComparer.Ordinal);
+
+    /// <summary>由官方列名精确反查中文条目；未命中时 <paramref name="item"/> 为空串。</summary>
+    public static bool TryItemOfColumn(string column, out string item)
+    {
+        if (ColumnToItem.TryGetValue(column, out var v)) { item = v; return true; }
+        item = string.Empty;
+        return false;
+    }
+
+    /// <summary>官方 CSV 表头列名："{中文} ({英文})"；无映射时回退为中文条目本身。</summary>
+    public static string CsvColumn(string item) =>
+        English.TryGetValue(item, out var en) ? $"{item} ({en})" : item;
+
+    /// <summary>官方宽表 CSV 的表头（含首列 file_name）。</summary>
+    public static string[] CsvHeader(IReadOnlyList<string> items)
+    {
+        var cols = new string[items.Count + 1];
+        cols[0] = "file_name";
+        for (int i = 0; i < items.Count; i++) cols[i + 1] = CsvColumn(items[i]);
+        return cols;
+    }
+}

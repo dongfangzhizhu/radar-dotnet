@@ -24,14 +24,33 @@ public sealed class RadarInferenceEngine : IDisposable
         _testItems = testItems;
     }
 
+    /// <summary>最大空间维：预处理后任一维超过它即跳过病例（对齐上游 inference_demo.py L421-427）。</summary>
+    public const int MaxSpatialDim = 1000;
+
+    /// <summary>
+    /// 空间维是否超限（应跳过）。批处理/预筛可直接调用，无需构造整条推理链。
+    /// </summary>
+    public static bool ExceedsSpatialLimit(int d, int h, int w)
+        => d > MaxSpatialDim || h > MaxSpatialDim || w > MaxSpatialDim;
+
+    /// <summary>
+    /// 推理结果。<paramref name="StitchedMask"/> 是 (D,H,W) 的 argmax 标签图（0=背景，n=器官 id+1），
+    /// 供掩码可视化与体素计数使用；补推阶段不修改它。
+    /// </summary>
     public sealed record Result(IReadOnlyDictionary<string, double> Probabilities, int WindowCount,
-        IReadOnlyDictionary<string, double>? PhaseMs = null);
+        IReadOnlyDictionary<string, double>? PhaseMs = null,
+        byte[]? StitchedMask = null, int D = 0, int H = 0, int W = 0);
 
     /// <summary>test_items 按 organ 名分组索引（item 名格式「器官_病灶」）。</summary>
     private readonly Dictionary<string, List<int>> _itemsByOrgan = new();
 
     public Result Run(float[] volume, int d, int h, int w, IReadOnlyList<string> testOrgans)
     {
+        // 超大病例保护：与上游一致，超过 1000 直接跳过（不是失败，批处理应继续）
+        if (ExceedsSpatialLimit(d, h, w))
+            throw new CaseSkippedException(
+                $"病例空间尺寸 ({d},{h},{w}) 超过 {MaxSpatialDim}，按上游约定跳过");
+
         foreach (var group in _testItems.Select((it, i) => (it, i)).GroupBy(t => t.it.Split('_')[0]))
             _itemsByOrgan[group.Key] = group.Select(t => t.i).ToList();
 
@@ -126,7 +145,7 @@ public sealed class RadarInferenceEngine : IDisposable
             result[_testItems[i]] = pos / list.Count;
         }
         phaseMs["total_ms"] = sw.ElapsedMilliseconds;
-        return new Result(result, windowCount, phaseMs);
+        return new Result(result, windowCount, phaseMs, stitched, d, h, w);
     }
 
     /// <summary>单窗前向 + intact 器官打分（复刻 forward_test_win）。</summary>

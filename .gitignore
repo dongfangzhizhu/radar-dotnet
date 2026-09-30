@@ -41,6 +41,11 @@ testdata/golden/*.json
 testdata/golden/windows/
 *.exit
 
+# 例外：PNG 编码器的独立预言机（export/gen_png_ref.py 自产，与上游权重无关、< 1 KB）
+# 必须入库 —— 否则新克隆上「编码器 vs Python zlib 参考」用例会静默跳过，编码器失去规范级校验
+!testdata/golden/png_ref_5x3.json
+!testdata/golden/png_ref_5x3.png
+
 # 探针/临时产物与扩展 ignore
 models/*.bin
 models/*.json

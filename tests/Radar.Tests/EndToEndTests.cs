@@ -67,5 +67,50 @@ public class EndToEndTests(ITestOutputHelper output)
         output.WriteLine($"匹配 {matched}/{golden.Count}，缺失 {missing}，max_diff={maxDiff:E3}");
         Assert.Equal(0, missing);
         Assert.Equal(golden.Count, matched); // 硬门禁：全部 < 1e-3
+
+        CompareStitchedMask(result, d, h, w);
+    }
+
+    /// <summary>
+    /// 分割掩码对拍（实测差距 #2 的数据来源）：滑窗 prob 累加 → argmax 拼接出的 (D,H,W) 标签图
+    /// 与 Python 黄金 <c>stitched_mask.npy</c> 比对。这一步覆盖了「掩码可视化 + 体素计数」的数据正确性。
+    /// </summary>
+    private void CompareStitchedMask(RadarInferenceEngine.Result result, int d, int h, int w)
+    {
+        string maskPath = Path.Combine(Root, "testdata", "golden", "stitched_mask.npy");
+        if (!File.Exists(maskPath)) return;
+
+        Assert.NotNull(result.StitchedMask);
+        Assert.Equal(d, result.D);
+        Assert.Equal(h, result.H);
+        Assert.Equal(w, result.W);
+        Assert.Equal((long)d * h * w, result.StitchedMask!.Length);
+
+        var arr = NpyReader.Parse(File.ReadAllBytes(maskPath));      // int16 (1,D,H,W)
+        Assert.Equal(typeof(short), arr.ElementType);
+        short[] goldenMask = (short[])arr.Data;
+        Assert.Equal((long)d * h * w, goldenMask.Length);
+
+        long mismatch = 0, bothNonZero = 0, goldenNonZero = 0;
+        int maxGolden = 0, maxOurs = 0;
+        for (int i = 0; i < goldenMask.Length; i++)
+        {
+            int g = goldenMask[i], o = result.StitchedMask[i];
+            if (g != 0) goldenNonZero++;
+            if (o != 0) bothNonZero++;
+            if (g > maxGolden) maxGolden = g;
+            if (o > maxOurs) maxOurs = o;
+            if (g != o) mismatch++;
+        }
+
+        double ratio = (double)mismatch / goldenMask.Length;
+        output.WriteLine($"掩码对拍：体素 {goldenMask.Length}，不一致 {mismatch}（{ratio:P4}），"
+            + $"前景 golden={goldenNonZero} ours={bothNonZero}，标签上界 golden={maxGolden} ours={maxOurs}");
+
+        Assert.Equal(maxGolden, maxOurs);            // 标签数域必须一致
+        Assert.Equal(goldenNonZero, bothNonZero);    // 前景体素数必须一致（可视化占比才可信）
+        // 硬门禁：实测 0 处不一致（12,496,896 体素逐体素相同）。
+        // argmax 在概率近平处本可能翻转，但本链路概率差 5.96e-7 远不足以翻任何体素。
+        Assert.Equal(0L, mismatch);
     }
 }
