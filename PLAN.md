@@ -234,7 +234,9 @@ EP 选择策略（`Radar.Core/Configuration`）：
 | golden 逐窗 dump | M1 自产 | 逐级对拍 | 否（gitignore） |
 | 更多样例 | MERLIN（Stanford AIMI，需注册下载） | 可选扩展 | 否 |
 
-获取脚本 `export/fetch_testdata.py`（M1 提供）：从 `../damo-radar/` 拷贝/软链至 `testdata/`，校验 md5。
+> 测试数据获取：demo case 与官方参考 CSV 从 `../damo-radar/` 对应目录拷入 `testdata/`；
+> golden 逐窗基线与 `testdata/dicom_*.zip` 分别由 `export/golden_dump.py` 与 `testdata/make_dicom*.py` 生成。
+> （原计划中的 `export/fetch_testdata.py` 未实现，数据获取按上述手动步骤执行。）
 
 ---
 
@@ -265,7 +267,9 @@ EP 选择策略（`Radar.Core/Configuration`）：
 
 导出产物不入库（>100 MB）。`models/README.md`（入库）记录：
 - 每个文件的 md5、参数量、导出日期、对应上游 ckpt 的 md5；
-- 一键重建命令：`python export/export_all.py`（依赖 `C:/Users/Administrator/miniconda3/python.exe`，torch 2.9.1+cu128）。
+- 重建命令（按序执行，无 `export_all.py` 汇总脚本；依赖 `C:/Users/Administrator/miniconda3/python.exe`，torch 2.9.1+cu128）：
+  `export/export_onnx.py` → `export/export_weights.py` → `export/export_text_feats.py` → `export/export_plus.py`。
+  各脚本自带对拍验收；完整清单见 README.md §4 与 models/README.md。
 
 ## 9. Git 工作流
 

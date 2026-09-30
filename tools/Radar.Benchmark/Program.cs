@@ -86,8 +86,8 @@ internal static class Program
             {
                 using var radar = new RadarInferenceEngine(engine, head, RadarLabels.Organs, items);
                 var result = radar.Run(prep.Data, prep.D, prep.H, prep.W, testOrgans);
-                double ort = result.PhaseMs!.GetValueOrDefault("ort_ms");
-                double headMs = result.PhaseMs.GetValueOrDefault("head_ms");
+                double ort = result.PhaseMs?.GetValueOrDefault("ort_ms") ?? 0;
+                double headMs = result.PhaseMs?.GetValueOrDefault("head_ms") ?? 0;
                 string diff = "-";
                 if (golden is not null)
                 {
@@ -96,7 +96,7 @@ internal static class Program
                     diff = max.ToString("E2");
                 }
                 rows.Add($"| {dev}（实际 {used}）| {swPre.ElapsedMilliseconds} | {swSess.ElapsedMilliseconds} | " +
-                         $"{result.PhaseMs["total_ms"]:F0} | {result.WindowCount} | {ort:F0} | {headMs:F0} | {diff} |");
+                         $"{(result.PhaseMs?.GetValueOrDefault("total_ms") ?? 0):F0} | {result.WindowCount} | {ort:F0} | {headMs:F0} | {diff} |");
             }
             finally
             {
