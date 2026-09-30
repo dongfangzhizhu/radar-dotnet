@@ -14,6 +14,21 @@ namespace Radar.Core.Nifti;
 /// </summary>
 public static class DicomReader
 {
+    /// <summary>
+    /// 注册 fo-dicom.Codecs 的原生转码器（JPEG Baseline/Extended/Lossless、JPEG-LS、
+    /// JPEG2000、RLE）。fo-dicom 5 默认只用托管解码器，缺失时对压缩语法报
+    /// DicomCodecException：「Decoding dataset with transfer syntax ... is not supported」。
+    /// 静态构造在首次使用 DicomReader 时执行一次。
+    /// </summary>
+    static DicomReader()
+    {
+        new DicomSetupBuilder()
+            .RegisterServices(s => s.AddFellowOakDicom()
+                .AddTranscoderManager<FellowOakDicom.Imaging.NativeCodec.NativeTranscoderManager>())
+            .SkipValidation()
+            .Build();
+    }
+
     /// <summary>读取 zip 包内的 DICOM 序列。</summary>
     public static NiftiImage ReadZip(string zipPath)
     {
@@ -176,10 +191,16 @@ public static class DicomReader
             for (int i = 0; i < pixelCount; i++)
                 result[i] = unchecked((short)BitConverter.ToUInt16(raw, i * 2));
         }
-        else if (bits == 8)
+        else if (bits == 8 && signed)
         {
             for (int i = 0; i < pixelCount; i++)
                 result[i] = unchecked((sbyte)raw[i]);
+        }
+        else if (bits == 8)
+        {
+            // 8bit 无符号（JPEG Baseline 解码后的常规形态）：0..255 原值
+            for (int i = 0; i < pixelCount; i++)
+                result[i] = raw[i];
         }
         else
             throw new NotSupportedException($"仅支持 BitsAllocated 8/16，实际 {bits}");

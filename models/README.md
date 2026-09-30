@@ -12,6 +12,11 @@
 | `plus_head_merlin_ft.npz` | 同上 | RADAR+ whole-head 权重 8 键（merlin 微调变体，temp=0.041191） | 1.26 MB |
 | `plus_text_feats.bin` + `.json` | 同上 | 9 疾病 134 条 prompt 文本特征（pretrain 变体，含 num_positive/start/count） | 134 KB |
 | `plus_text_feats_merlin_ft.bin` + `.json` | 同上 | 同上（merlin 微调变体） | 134 KB |
+| `radar_vision_fp16.onnx` | `python ../export/export_onnx_fp16.py` | fp16 变体（keep_io_types=True，51.9 MB）——**评估用，未启用**：res_x max 2.4e-3 超门禁 240 倍且 pred_mask/flags 有翻转，见 PLAN.md M8-2 | 51.9 MB |
+
+DICOM 解码依赖（NuGet）：`fo-dicom` 5.2.5 + `fo-dicom.Codecs` 5.16.7（原生编解码器，
+DicomReader 静态构造注册 NativeTranscoderManager）。覆盖 RLE / JPEG Baseline / JPEG Extended /
+JPEG Lossless / JPEG-LS(Lossy) / JPEG2000 / HT-JPEG2000。Windows 目标机需 VC++ 2015-2022 运行库。
 
 上游依赖（不在本仓库，缺失则无法重建）：
 - `../RADAR/checkpoint_radar_pretrain.pth`（1.49 GB，HuggingFace）

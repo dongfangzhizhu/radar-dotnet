@@ -160,7 +160,7 @@ EP 选择策略（`Radar.Core/Configuration`）：
 ### M5 — 性能测试与多 EP 矩阵（预计 2 天）✅ 2026-09-29
 - [x] 基准程序 `tools/Radar.Benchmark`（阶段分解：预处理/会话创建/ORT/轻头/端到端，Debug/Release 配置自适应标注）
 - [x] 扩展数据集冒烟：merlin 4 例全 PASS（146 条目、无 NaN）
-- [ ] fp16 ONNX 可选路径（待办：需重导 fp16 模型 + 全链路精度复验）
+- [x] fp16 ONNX 可选路径（2026-09-30 评估完成：不达标，结论为不启用，见 M8-2）
 - **R4 缺口已修复（补推区二次滑窗）**：bbox 超出 ROI 时对 crop+pad 区域做二次滑窗（子窗恒为 96×256×384），skip_organ 保证目标器官在每个子窗均视为非边界、organFeats 缓存保证特征只算一次；数值与 Python 原版"单窗整推"有差（多窗视角），demo case 不触发此路径、146 项硬门禁不受影响。AC4242a2f 由 FAIL 转 PASS。
 - **实测结论（benchmarks.md，Release 构建）**：① DirectML/CUDA 探活当时失败系 Gpu 包缺失（M6 已修复）；② Release demo CPU 端到端 **60.2s**（Debug 120.7s 的一半），ORT 占 86%（51.6s）、手写轻头 0.9s（Debug 5.8s → JIT 优化 6.5 倍）；③ Release 优化未破坏 fp 语义（vs golden max 仍 1.10e-6）；④ 探活必须校验返回的实际 EP（Create 失败会静默回退）。
 
@@ -172,7 +172,8 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] **CUDA 性能兑现（会话复用 + 输出缓冲复用）**：JobRunner 按 EP 缓存 VisionEngine 跨任务复用（RadarInferenceEngine 不再级联 Dispose）；VisionEngine 输出缓冲跨窗复用（~450MB/窗免重复分配）。实测（Release，RTX 4090）：demo case CUDA 首跑 120.9s（含会话/上下文初始化）→ **稳态 24.7s**（CPU 60.2s 的 2.4 倍快），数值 vs golden 不变（max=4e-4 mean=2.6e-5）
 - [x] **DICOM 压缩传输语法**：DicomReader 自动把压缩语法（JPEG/JPEG-LS/JPEG2000/RLE 等）经 `Imaging.Codec.DicomTranscoder` 转码为 Explicit VR LE 后解码；RLE 无损压缩回环对拍逐位一致（CompressedTransferSyntax 测试）
 - [x] **部署双变体（DirectML + CUDA）**：ORT 同进程只能加载一个 onnxruntime.dll（DML build 与 CUDA build 互斥），csproj 按 `-p:OnnxEp=Cuda|Dml` 条件选择原生包变体（Cuda=Gpu 1.30 / Dml=DirectML 1.24.4，托管层版本跟随），部署时按目标机器 GPU 类型选产物；本机验证 DML 变体探活 `DirectMl: OK（实际 EP = DirectMl）`
-- [ ] DICOM 有损压缩（JPEG 有损族）精度影响评估（当前无损族已覆盖）
+- [x] **DICOM 有损压缩（JPEG 有损族）精度影响评估**（2026-09-30 完成，见 M8）
+- [x] **fp16 ONNX 可选路径评估**（2026-09-30 完成，见 M8：不达标，结论为不启用）
 
 ### M7 — radar_plus 系列权重迁移（2026-09-29 追加）✅
 - [x] **权重结构探明**（probe_plus_ckpt.py）：两个 checkpoint（`checkpoint_radar_plus.pth` pretrain / `checkpoint_radar_plus_finetuned_on_merlin.pth` merlin_ft）各含 8 个 whole-head 键（attention_whole.in_proj (768,256) Q|K|V 行序同器官头、vision_projs_whole (256,256)、query_tokens_whole (1,256)、temp 标量）+ text_proj (256,768) + text_encoder 199 键（BLIP med.py 裁剪版 BertModel：无 token_type_embeddings、无 pooler）。temp 两套不同（pretrain=0.053180 / merlin_ft=0.041191），故权重+文本特征各导一套
@@ -183,7 +184,39 @@ EP 选择策略（`Radar.Core/Configuration`）：
 - [x] **黄金对拍**（export/plus_golden.py → testdata/golden/plus_golden_*.json，ORT CPU + numpy 朴素 whole head）：PlusTests 4 项全过——merlin_ft feature max_diff=2.4e-5 / prob max_diff=1.3e-4；pretrain feature 6.3e-7 / prob 9.7e-7（门限 1e-4 / 1e-3）
 - [x] **后端 + Web 接入**：JobRunner 支持 `model=radar|radar_plus` + `variant=pretrain|merlin_ft`（whole head 按变体缓存）；API `/api/jobs/*` 透传；前端加「推理模型 / 权重变体」选择器与模型列
 - [x] **测试基建**：测试并行禁用（重测试各自 ONNX 会话并行跑触发 BFCArena 1.2GB OOM）；全量 12/12 PASS（5m23s）
-- [ ] fp16 ONNX 可选路径（延续 M5 待办）
+
+### M8 — 遗留待办闭环：DICOM 有损压缩评估 + fp16 路径评估（2026-09-30）✅
+
+#### M8-1 DICOM 有损压缩（JPEG 有损族）精度评估
+- **前置修复（实测发现的真 bug）**：`DicomReader.DecodeFrameHu` 的 8bit 分支无视 `PixelRepresentation`，把 unsigned 8bit（JPEG Baseline 解码后的常规形态）按 `sbyte` 解释，HU 偏差均值 2392 HU / max 5218 HU；已按符号分支修复。
+- **codec 接入**：fo-dicom 5.1.3 核心包不含 JPEG 解码器，报 `DicomCodecException: ... is not supported`；引入官方扩展包 `fo-dicom.Codecs`（原生 C/C++ 编解码，覆盖 JPEG Baseline/Extended/Lossless、JPEG-LS(Lossy)、JPEG2000、HT-JPEG2000、RLE），升级 `fo-dicom` 5.1.3 → **5.2.5**（Codecs 5.16.7 要求 ≥5.2.5），并在 `DicomReader` 静态构造注册 `NativeTranscoderManager`。Windows 目标机需 VC++ 2015-2022 运行库（未装报 `Unable to load DLL 'Dicom.Native'`）。
+- **评估样例**：`testdata/make_dicom_lossy.py` 生成 JPEG Baseline 8bit 有损序列（HU 线性重标到 0-255，整卷统一 slope=18.7529/intercept=-3024；q90/q75 两档），368 切片。
+- **实测结论（`DicomLossyTests`，pydicom 独立解码交叉验证一致）**：
+
+| 指标 | q90 | q75 |
+|---|---|---|
+| HU 误差 max / mean | 417.9 / 13.33 | 910.0 / 20.02 |
+| HU 误差 p99 / 中位 | 82.4 / 8.5 | 168.8 / 11.3 |
+| clip[-300,400] 域内 mean | 15.51 | 21.67 |
+| 预处理输出 max_diff（[0,1] 域） | 0.325 | 0.614 |
+| 端到端 146 项 prob max_diff | 0.166 | 未跑 |
+| 阳性判定（p≥0.5）翻转 | 0 项 | — |
+
+- **判定**：8bit 量化步长 ≈ 18.75 HU（量化固有误差 ≤ 半步长 9.4 HU），实测均值 13~20 HU 还叠加了 JPEG 振铃；max 误差出现在骨/气高对比边缘（q90: ref=-112 → rec=-530），属编码固有特性非链路缺陷（与 pydicom 解码完全一致）。对最终概率的影响达 0.166（超 1e-3 门禁两个量级），虽然本 demo 病例阳性判定未翻转，但器官分割对边界 HU 跳变敏感 → **诊断链路不接受 8bit 有损 JPEG**。若必须压缩，建议 16bit JPEG2000 有损（近无损）或仅用于预览/存档，不进推理链路。
+
+#### M8-2 fp16 ONNX 路径评估
+- **导出**：`export/export_onnx_fp16.py`（onnxconverter-common 1.16.0，隔离安装于 `export/.deps`，`keep_io_types=True`），103.7 MB → 51.9 MB。
+- **踩坑**：转换器对原图自带 `Cast` 节点处理不一致——value_info 已改 fp16 但 `to` 属性仍为 FLOAT，ORT 载入报 `Type (tensor(float16)) of output arg (/Cast_output_0) ... does not match expected type (tensor(float))`；脚本内按 value_info 回写 `to` 属性后 `onnx.checker` 通过、会话可建。
+- **实测对拍（同输入 (96,256,384)，fp16 vs fp32 输出，CPU/CUDA 两 EP 结论一致）**：
+
+| 输出 | CPU max | CPU mean | 门禁 | 判定 |
+|---|---|---|---|---|
+| seg_probs | 3.38e-1 | 2.6e-5 | 1e-5 | ✗（p99.9 6.2e-3） |
+| res_x1/x2/x3 | 2.4e-3 ~ 3.6e-3 | ~2e-4 | 1e-5 | ✗（超 240 倍） |
+| pred_mask | 4267/9.4M 像素不同 | — | 0 | ✗（argmax 翻转） |
+| flags1/2/3 | 8 / 21 / 76 位翻转 | — | 0 | ✗（token 选择掩码变化） |
+
+- **判定**：fp16 全模型转换**不满足现有对齐门禁**（res_x 超门禁 240 倍；pred_mask/flags 存在翻转，flags 翻转会改变 key 序列结构）。**结论：不启用 fp16 路径**；保持 fp32（CUDA fp32 稳态 24.7s 已兑现 2.4× CPU）。若将来确需 fp16，须做混合精度（Conv/BatchNorm 等敏感算子保 fp32，仅 GEMM 类降精）并重跑全链路复验，而非整体 `convert_float_to_float16`。
 
 > 总工期估算：**11–15 个工作日**（单人）。M1 硬门槛已于 2026-09-29 通过（4 个 commit）。
 >

@@ -12,8 +12,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- DICOM 读取（CT 序列/多帧），DicomReader.cs 使用 -->
-    <PackageReference Include="fo-dicom" Version="5.1.3" />
+    <!-- DICOM 读取（CT 序列/多帧），DicomReader.cs 使用。
+         Codecs 包提供原生编解码器（JPEG Baseline/Extended/Lossless、JPEG-LS、JPEG2000、RLE），
+         需 fo-dicom >= 5.2.5，且要在用前把 NativeTranscoderManager 注册进 fo-dicom DI
+         （见 DicomReader 静态构造）。Windows 目标机需 VC++ 2015-2022 运行库。 -->
+    <PackageReference Include="fo-dicom" Version="5.2.5" />
+    <PackageReference Include="fo-dicom.Codecs" Version="5.16.7" />
   </ItemGroup>
 
   <!-- 托管层版本跟随原生包变体（保持 C API 版本自洽） -->

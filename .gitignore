@@ -24,6 +24,7 @@ results/
 
 # Python 导出脚本虚拟环境
 export/.venv/
+export/.deps/
 export/__pycache__/
 __pycache__/
 *.pyc
@@ -44,6 +45,7 @@ testdata/golden/windows/
 models/*.bin
 models/*.json
 testdata/_dicom_tmp/
+testdata/_dicom_tmp_q*/
 build_*.done
 export/v1v2_compare*.txt
 probe_*.txt
