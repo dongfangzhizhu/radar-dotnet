@@ -15,7 +15,12 @@ for (var dir = new DirectoryInfo(repoRoot); dir is not null; dir = dir.Parent)
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders().AddConsole();
 builder.Services.ConfigureHttpJsonOptions(o =>
-    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter())); // enum 序列化为字符串（前端依赖）
+{
+    // 前端（wwwroot/index.html）按 camelCase 字段名读取，这里显式声明契约，
+    // 不依赖 Minimal API 的隐式默认（默认即 camelCase，但改了配置/版本容易漂）。
+    o.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()); // enum 序列化为字符串（前端依赖）
+});
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 builder.Services.AddSingleton<InferenceJobRunner>(sp =>
     new InferenceJobRunner(repoRoot, sp.GetRequiredService<ILogger<InferenceJobRunner>>()));

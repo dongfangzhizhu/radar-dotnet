@@ -49,3 +49,6 @@ testdata/_dicom_tmp_q*/
 build_*.done
 export/v1v2_compare*.txt
 probe_*.txt
+
+# 会话临时验证脚本与产物（.tmp_ 前缀）
+.tmp_*

@@ -162,22 +162,22 @@ async function pollJobs() {
   jobsCache = await (await fetch('/api/jobs')).json();
   const tb = $('jobRows');
   if (!jobsCache.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">暂无任务</td></tr>'; return; }
-  const running = jobsCache.filter(j => j.Status === 'Running' || j.Status === 'Queued').length;
+  const running = jobsCache.filter(j => j.status === 'Running' || j.status === 'Queued').length;
   $('barFill').style.width = running ? '60%' : '0';
   tb.innerHTML = jobsCache.map(j => `
     <tr>
-      <td class="muted">${j.Id}</td>
-      <td>${j.FileName}</td>
-      <td>${j.Model === 'radar_plus' ? 'RADAR+' : 'RADAR'}${j.Model === 'radar_plus' ? '·' + (j.Variant || '') : ''}</td>
-      <td>${j.Device}</td>
-      <td><span class="tag ${j.Status}">${jobCn(j.Status)}</span></td>
-      <td class="prob-cell">${j.ElapsedMs ? (j.ElapsedMs / 1000).toFixed(1) + ' s' : '-'}</td>
-      <td>${j.WindowCount || '-'}</td>
-      <td>${j.Status === 'Completed' ? `<a href="#" onclick="showResult('${j.Id}');return false" class="csv">查看</a>` : ''}</td>
+      <td class="muted">${j.id}</td>
+      <td>${j.fileName}</td>
+      <td>${j.model === 'radar_plus' ? 'RADAR+ · ' + (j.variant || '') : 'RADAR'}</td>
+      <td>${j.device}</td>
+      <td><span class="tag ${j.status}">${jobCn(j.status)}</span></td>
+      <td class="prob-cell">${j.elapsedMs ? (j.elapsedMs / 1000).toFixed(1) + ' s' : '-'}</td>
+      <td>${j.windowCount || '-'}</td>
+      <td>${j.status === 'Completed' ? `<a href="#" onclick="showResult('${j.id}');return false" class="csv">查看</a>` : ''}</td>
     </tr>`).join('');
   if (selectedJob) {
-    const j = jobsCache.find(x => x.Id === selectedJob);
-    if (j && j.Status === 'Completed') renderResult(j);
+    const j = jobsCache.find(x => x.id === selectedJob);
+    if (j && j.status === 'Completed') renderResult(j);
   }
 }
 
@@ -185,16 +185,16 @@ function jobCn(s) { return { Queued: '排队中', Running: '推理中', Complete
 
 function showResult(id) {
   selectedJob = id;
-  const j = jobsCache.find(x => x.Id === id);
+  const j = jobsCache.find(x => x.id === id);
   if (j) renderResult(j);
 }
 
 function renderResult(j) {
   $('resultPanel').style.display = '';
-  $('resJob').textContent = `${j.Id}（${j.FileName} · ${j.Device}）`;
-  $('csvLink').href = `/api/jobs/${j.Id}/csv`;
-  $('kpiTime').textContent = (j.ElapsedMs / 1000).toFixed(1) + ' s';
-  const probs = Object.entries(j.Probabilities).sort((a, b) => b[1] - a[1]);
+  $('resJob').textContent = `${j.id}（${j.fileName} · ${j.device}）`;
+  $('csvLink').href = `/api/jobs/${j.id}/csv`;
+  $('kpiTime').textContent = j.elapsedMs ? (j.elapsedMs / 1000).toFixed(1) + ' s' : '-';
+  const probs = Object.entries(j.probabilities || {}).sort((a, b) => b[1] - a[1]);
   $('kpiCount').textContent = probs.length;
   $('kpiPos').textContent = probs.filter(p => p[1] >= 0.5).length;
   $('probRows').innerHTML = probs.map(([k, v]) => `
