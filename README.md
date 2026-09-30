@@ -43,7 +43,7 @@ DICOM 侧自动处理压缩传输语法（RLE / JPEG Baseline / JPEG Extended / 
 - **多 EP 与部署变体**：按 `-p:OnnxEp=Cuda|Dml` 条件选择原生包；CUDA 路径下会话与输出缓冲跨任务复用
 - **官方格式导出**：宽表 CSV（BOM + CRLF + `{中文} ({英文})` 列名 + Python `repr(float)` 数值），与官方文件**逐字节往返一致**；另有 JSON 导出端点
 - **分割掩码可视化**：滑窗 argmax 拼接的标签图 → 三正交 MIP 透叠 PNG（零依赖编码器，无图像库）
-- **目录级批处理**：`radar infer --input <dir>` 多 worker × 设备分片，输出顺序与输入排序对齐
+- **目录级批处理**：`radar infer --img-dir <dir>` 多 worker × 设备分片，输出顺序与输入排序对齐
 - **AUC 评估**：`radar eval` 按 MERLIN 21 项 finding 出 AUC + AvgAUC，算子与 `sklearn.roc_auc_score` 逐值一致
 - **超大病例守卫**：预处理后任一空间维 > 1000 直接 `CaseSkippedException`（跳过 ≠ 失败，批处理继续）
 
@@ -130,26 +130,47 @@ dotnet run --project src/Radar.Backend -c Release --no-build
 ### 3.4 命令行（`radar` CLI）
 
 ```bash
-# 单文件或整目录批量推理，直接产出官方格式宽表 CSV
+# 整目录批量推理，产出官方格式宽表 CSV + 分割掩码图
 dotnet run --project tools/Radar.Cli -c Release -- infer \
-    --input testdata --output out/results.csv --device cpu --workers 4 --save-mask
+    --img-dir testdata --save-dir results --workers 4 --device cpu --save-mask
+
+# 多设备分片（等价上游多卡 all_gather 的有序汇总）：cpu + cuda 各扛一半
+dotnet run --project tools/Radar.Cli -c Release -- infer \
+    --img-dir testdata --devices cpu,cuda --workers 4 --save-tag demo_cuda
 
 # MERLIN 测试集 AUC 评估（21 项 finding + AvgAUC）
 dotnet run --project tools/Radar.Cli -c Release -- eval \
-    --pred out/results.csv --labels merlin_labels.json --device cpu
+    --results-csv results/RADAR_infer_results_demo.csv --labels merlin_labels.json
+
+# 完整参数说明
+dotnet run --project tools/Radar.Cli -c Release -- help
 ```
 
-| 参数 | 适用命令 | 说明 |
-|---|---|---|
-| `--input` | `infer` | 文件或目录（递归扫描 `.nii/.nii.gz/.dcm/.zip`） |
-| `--output` | `infer` | 输出宽表 CSV 路径 |
-| `--model` / `--variant` | 两条 | `radar`(默认) / `radar_plus`；变体 `pretrain` / `merlin_ft` |
-| `--device` / `--workers` | 两条 | 执行后端；并行 worker 数（按设备分片，输出顺序仍与输入排序一致） |
-| `--save-mask` | `infer` | 为每个 `radar` 病例额外落盘掩码 PNG |
-| `--pred` / `--labels` | `eval` | 预测宽表 CSV；MERLIN 标签 JSON |
-| `--sag-counts` | `eval` | 胆囊缺失项改用分割体素计数的数据源（上游口径：体素 < 1000 判阳性） |
+**`infer` 选项：**
 
-> 批处理中超出 1000 维的病例会被跳过并在汇总里单列，不计入失败。
+| 参数 | 说明 |
+|---|---|
+| `--img-dir <目录>` | **必填**。待推理病例目录，递归识别 `.nii` / `.nii.gz` / `.dcm` / `.zip` |
+| `--save-dir <目录>` | 结果目录，默认 `<仓库根>/results` |
+| `--save-tag <标签>` | 输出文件名后缀，默认 `demo` → `<save-dir>/RADAR_infer_results_<标签>.csv` |
+| `--device <设备>` | `cpu` / `directml` / `cuda`，默认 `cpu` |
+| `--devices <列表>` | 多设备分片，逗号分隔（如 `cpu,cuda`），与 `--workers` 配合 |
+| `--workers <N>` | 并行度，默认 1；每个 worker 独占一个推理会话 |
+| `--model <模型>` | `radar`（默认）/ `radar_plus` |
+| `--variant <变体>` | `radar_plus` 专用：`pretrain` / `merlin_ft`（默认） |
+| `--save-mask` | 额外输出掩码透叠图 `<save-dir>/masks/<病例>.png`（仅 `radar` 路径产出） |
+| `--limit <N>` | 只处理前 N 个病例（调试用） |
+
+**`eval` 选项：**
+
+| 参数 | 说明 |
+|---|---|
+| `--results-csv <路径>` | **必填**。`infer` 产出的宽表 CSV |
+| `--labels <路径>` | **必填**。MERLIN 标签 JSON `{疾病键: {病例ID: 标签}}` |
+| `--sag-counts <路径>` | 可选。胆囊分割体素数 JSON `{病例ID: 体素数}`，复刻上游对「胆囊_术后胆囊缺失」的体素数判定口径 |
+
+> - 空间任一维 > 1000 的病例按上游约定**跳过**（不计入结果表，也不视为失败）。
+> - 多设备 / 多 worker 的结果**按输入文件顺序聚合**，等价上游多卡 `all_gather` 的有序汇总。
 
 ### 3.5 测试
 
@@ -259,7 +280,7 @@ NIfTI 读取 → 预处理 → 滑窗调度 → 视觉主干 → 器官头 / who
 
 | # | 项 | 状态 | 落地位置与验收 |
 |---|---|---|---|
-| 1 | **CSV 导出格式** | ✅ 已对齐 | `Radar.Core/Postprocessing/ResultCsv.cs` + `Support/TestItemLabels.cs`（由 `export/gen_item_labels.py` 从上游源码 `ast` 提取，并与官方 CSV 表头 146 列逐列交叉校验）。BOM + CRLF + `{中文} ({英文})` + Python `repr(float)`；对官方文件**逐字节往返一致**（9993 = 9993 字节）。API：`/csv?format=official`；CLI：`radar infer --output` |
+| 1 | **CSV 导出格式** | ✅ 已对齐 | `Radar.Core/Postprocessing/ResultCsv.cs` + `Support/TestItemLabels.cs`（由 `export/gen_item_labels.py` 从上游源码 `ast` 提取，并与官方 CSV 表头 146 列逐列交叉校验）。BOM + CRLF + `{中文} ({英文})` + Python `repr(float)`；对官方文件**逐字节往返一致**（9993 = 9993 字节）。API：`/csv?format=official`；CLI：`radar infer` 的 `--save-dir`/`--save-tag` |
 | 2 | **分割掩码可视化** | ✅ 已实现 | `Radar.Core/Visualization/{PngEncoder,MaskOverlayPng}.cs`：零依赖 PNG 编码器（真彩色 RGB8 + ZLibStream + CRC32）+ 三正交 MIP 透叠（36 器官 HSV 色环）。数据源为引擎暴露的 `Result.StitchedMask`，与黄金 `stitched_mask.npy` **逐体素全等**（0/12,496,896）。API：`/mask.png`；CLI：`--save-mask` |
 | 3 | **目录级批量推理** | ✅ 已实现 | `tools/Radar.Cli` `infer` 子命令：递归扫描 `.nii/.nii.gz/.dcm/.zip`，按输入排序确定性并行（`--workers` × 设备分片），结果按序聚合后一次写出宽表；Web 端 `/api/jobs/batch` + 样例多选 |
 | 4 | **独立 CLI 推理入口** | ✅ 已实现 | `tools/Radar.Cli`（程序集名 `radar`）：`infer` / `eval` / `help`，`--key value` 风格参数，自动上溯仓库根定位 `models/` |
